@@ -11,10 +11,8 @@ class Pulse:
     MIN_SYNC_PERIOD_US = 51
     MAX_SYNC_PERIOD_US = 138
 
-    SWEEP_CENTER_TIME = 8000
-
     PI = 3.14159265
-    SWEEP_PERIOD_US = 16666.666667
+    SWEEP_PERIOD_US = 8333.3333
     SWEEP_VELOCITY = pi / SWEEP_PERIOD_US
 
     SENSOR_WIDTH_MM = 1.0 # FIXME: Look at data-sheet or measure
@@ -48,8 +46,10 @@ class Pulse:
     def __repr__(self):
         if self.isSync():
             end = ", predicted=" + str(self.predictedSweep()) + ">"
-        else:
+        elif self.isSweep():
             end = ", hit=" + str(self.sweepHit()) + ", parent=" + self.parent.typeString() + ">"
+        else:
+            end = ">"
         return "Pulse Object:<period=" + str(self.period()) + ", type=" + self.typeString() + end
 
     ''' Universal Attributes '''
@@ -64,12 +64,12 @@ class Pulse:
 
     def sweepHit(self):
         '''
-        Returns the time in microseconds that the sweep beam
-        took to cross the photodiode.
+        Returns the time in milliseconds that the sweep beam
+        took to hit the photodiode after the sync.
         '''
         if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
-        return Pulse.get_period_us(self.parent.end, self.start)
+        return Pulse.get_period_us(self.parent.end, self.start) / 1000.0
 
     def getAngle(self):
         '''
@@ -273,7 +273,7 @@ class Mimsy:
 class Network:
 
     VALID_PULSES = [ [Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert],
-                        [Pulse.Sync, Pulse.Vert, Pulse.Sync, Pulse.Horiz]]
+                        [Pulse.Sync, Pulse.Vert, Pulse.Sync, Pulse.Horiz] ]
 
     MAX_RANGE_CM = 1.5 * 100
     TEST_DIST_CM = 100 # 1 meter default

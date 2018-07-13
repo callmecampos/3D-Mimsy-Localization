@@ -42,6 +42,7 @@ static const uint32_t timer_cnt = 32000000;
 
 static const float sweep_velocity = PI / SWEEP_PERIOD_US;
 
+volatile pulse_t valid_pulses[PULSE_TRACK_COUNT][PULSE_TRACK_COUNT];
 volatile pulse_t pulses[PULSE_TRACK_COUNT];
 volatile bool startSeen;
 volatile uint32_t start;
@@ -50,12 +51,15 @@ volatile uint32_t start;
 
 void localization_timer_cb(opentimers_id_t id);
 void localization_task_cb(void);
+void localization_timer_debug(opentimers_id_t id);
+void localization_task_debug(void);
 void open_timer_init(void);
+void test_open_timer_init(void);
 void precision_timer_init(void);
 void configure_pins(void);
 void openmote_GPIO_A_Handler(void);
 
-bool localize_mimsy(float *r, float *theta, float *phi);
+bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local);
 
 //=========================== public ==========================================
 
@@ -71,6 +75,13 @@ void localization_init(void) {
         pulses[i].start = 0; pulses[i].end = 0; pulses[i].sync_sweep = -1;
     }
 
+    unsigned short int j;
+    for (i = 0; i < PULSE_TRACK_COUNT; i++) {
+        for (j = 0; j < PULSE_TRACK_COUNT; j++) {
+            valid_pulses[i][j].start = 0; valid_pulses[i][j].end = 0; valid_pulses[i][j].sync_sweep = -1;
+        }
+    }
+
     // register at UDP stack
     localization_vars.desc.port              = WKP_UDP_LOCALIZATION;
     localization_vars.desc.callbackReceive   = &localization_receive;
@@ -79,7 +90,8 @@ void localization_init(void) {
 
     configure_pins();
     precision_timer_init();
-    open_timer_init();
+    // open_timer_init();
+    test_open_timer_init();
 }
 
 void open_timer_init(void){
@@ -92,6 +104,19 @@ void open_timer_init(void){
         TIME_MS,
         TIMER_PERIODIC,
         localization_timer_cb
+    );
+}
+
+void test_open_timer_init(void){
+    localization_vars.period = LOCALIZATION_PERIOD_MS;
+    // start periodic timer
+    localization_vars.timerId = opentimers_create();
+    opentimers_scheduleIn(
+        localization_vars.timerId,
+        LOCALIZATION_PERIOD_MS,
+        TIME_MS,
+        TIMER_PERIODIC,
+        localization_timer_debug
     );
 }
 
@@ -171,11 +196,11 @@ void openmote_GPIO_A_Handler(void) {
         startSeen = true;
     } else if (startSeen) {
         // shift previous pulses
-        unsigned short int i;
-        for (i = 0; i < PULSE_TRACK_COUNT-1; i++) {
-            pulses[i] = pulses[i+1];
-        }
-        pulses[PULSE_TRACK_COUNT-1].start = start;  pulses[PULSE_TRACK_COUNT-1].end = time;
+        pulses[0] = pulses[1];
+        pulses[1] = pulses[2];
+        pulses[2] = pulses[3];
+        pulses[3] = pulses[4];
+        pulses[4].start = start;  pulses[4].end = time;
     }
 
     // Enable interrupts
@@ -191,9 +216,18 @@ void localization_timer_cb(opentimers_id_t id){
     // SCHEDULER_WAKEUP();
 }
 
+/**
+\note timer fired, but we don't want to execute task in ISR mode instead, push
+   task to scheduler with CoAP priority, and let scheduler take care of it.
+*/
+void localization_timer_debug(opentimers_id_t id){
+    scheduler_push_task(localization_task_debug,TASKPRIO_COAP);
+    // SCHEDULER_WAKEUP();
+}
+
 void localization_task_cb(void) {
    OpenQueueEntry_t*    pkt;
-   uint8_t              asnArray[5];
+   // uint8_t              asnArray[5];
 
    // don't run if not synch
    if (ieee154e_isSynch() == FALSE) return;
@@ -220,10 +254,10 @@ void localization_task_cb(void) {
    } z;
 
    float *r; float *theta; float *phi;
-   pulse_t pulses[PULSE_TRACK_COUNT];
+   pulse_t pulses_copy[PULSE_TRACK_COUNT];
 
    // perform localization calculations
-   if (!localize_mimsy(r, theta, phi, pulses)) return;
+   if (!localize_mimsy(r, theta, phi, pulses_copy)) return;
 
    //x.flt = *r * sinf(*theta) * cosf(*phi);
    //y.flt = *r * sinf(*theta) * sinf(*phi);
@@ -285,7 +319,7 @@ void localization_task_cb(void) {
 
       unsigned int i;
       for (i = 0; i < 4; i++) {
-         pkt.payload[payload_ind] = start.bytes[i];
+         pkt->payload[payload_ind] = start.bytes[i];
          payload_ind++;
       }
 
@@ -297,7 +331,7 @@ void localization_task_cb(void) {
       end._int = pulses_copy[ind].end;
 
       for (i = 0; i < 4; i++) {
-         pkt.payload[payload_ind] = end.bytes[i];
+         pkt->payload[payload_ind] = end.bytes[i];
          payload_ind++;
       }
    }
@@ -312,6 +346,31 @@ void localization_task_cb(void) {
 
    if ((openudp_send(pkt))==E_FAIL) {
       openqueue_freePacketBuffer(pkt);
+   }
+}
+
+void localization_task_debug(void) {
+   float *r; float *theta; float *phi;
+   pulse_t pulses_copy[PULSE_TRACK_COUNT];
+
+   // perform localization calculations
+   if (!localize_mimsy(r, theta, phi, pulses_copy)) return;
+
+   // set valid_pulse
+   unsigned short int i;
+   unsigned short int j;
+   for (i = 0; i < PULSE_TRACK_COUNT-1; i++) {
+       for (j = 0; j < PULSE_TRACK_COUNT; j++) {
+           valid_pulses[i][j].start = valid_pulses[i+1][j].start;
+           valid_pulses[i][j].end = valid_pulses[i+1][j].end;
+           valid_pulses[i][j].sync_sweep = valid_pulses[i+1][j].sync_sweep;
+       }
+   }
+
+   for (i = 0; i < PULSE_TRACK_COUNT; i++) {
+     valid_pulses[PULSE_TRACK_COUNT-1][i].start = pulses_copy[i].start;
+     valid_pulses[PULSE_TRACK_COUNT-1][i].end = pulses_copy[i].end;
+     valid_pulses[PULSE_TRACK_COUNT-1][i].sync_sweep = pulses_copy[i].sync_sweep;
    }
 }
 
@@ -348,7 +407,8 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
         float period = get_period_us(pulses_local[i].start, pulses_local[i].end);
         if (period < MIN_SYNC_PERIOD_US) { // sweep pulse
             if (init_sync_index != PULSE_TRACK_COUNT) {
-                int axis = (sync_pulse(period) & 0b001) + 1;
+                float parent_period = get_period_us(pulses_local[i-1].start, pulses_local[i-1].end);
+                int axis = (sync_pulse(parent_period) & 0b001) + 1;
                 pulses_local[i].sync_sweep = axis; // 1 if horizontal, 2 if vertical
 
                 int ind = i - init_sync_index;
