@@ -1,4 +1,9 @@
 from visualization import *
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-l", "--log", action='store_true', help='a logging flag')
+args = parser.parse_args()
 
 ''' Tests '''
 basic_valid = [0, 1, 2]
@@ -27,7 +32,7 @@ for p in sequences_pass:
 for f in sequences_fail:
     assert not Network.validSequence(f)
 
-print('Valid Sequence Tests Passed')
+print('Valid Sequence Tests Passed.')
 
 test_input = [[(0, 58), (6562, 6575), (17000, 17069), (20569, 20588), (34000, 34055)]]
 corresponding = [[Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert, Pulse.Sync]]
@@ -39,11 +44,11 @@ for i, pulses in enumerate(test_input):
         tracking = Pulse(pulse[0], pulse[1], parent=tracking)
         assert tracking.type == corresponding[i][j]
 
-print('Pulse Type Tests Passed')
+print('Pulse Type Tests Passed.')
 
-network = Network.initialize()
+network = Network.initialize(logging=args.log)
 
 for inp in test_input:
     network.update(raw_pulses=inp)
 
-print('Network Updated')
+print('Network Updated.')

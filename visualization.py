@@ -209,7 +209,7 @@ class Mimsy:
         self.system = system
 
         if self.systemSpherical():
-            self._radial, self._phi, self.theta = [float(elem) for elem in data]
+            self._radial, self._phi, self._theta = [float(elem) for elem in data]
         elif self.systemCartesian():
             self._x, self._y, self._z = [float(elem) for elem in data]
         else:
@@ -221,7 +221,7 @@ class Mimsy:
         if self.systemCartesian():
             self._x, self._y, self._z = [float(elem) for elem in data]
         elif self.systemSpherical():
-            self._radial, self._phi, self.theta = [float(elem) for elem in data]
+            self._radial, self._phi, self._theta = [float(elem) for elem in data]
 
     def x(self):
         if self.systemSpherical():
@@ -275,15 +275,29 @@ class Network:
     VALID_PULSES = [ [Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert],
                         [Pulse.Sync, Pulse.Vert, Pulse.Sync, Pulse.Horiz]]
 
+    MAX_RANGE_CM = 1.5 * 100
     TEST_DIST_CM = 100 # 1 meter default
 
     LOGS = './logs/'
 
-    def __init__(self, system=Mimsy.spherical, reference=(0, 0, 0), station_dims=(1, 1, 1)):
+    def __init__(self, system=Mimsy.spherical, reference=(0, 0, 0), station_dims=(10, 6.35, 10), logging=True):
+        self.logging = logging
+
         # Initialize base station
         self.reference = reference
+
+        self.scene = display(title='Network Visualization', x=0, y=0)
+        self.scene.background = (0.5,0.5,0.5)
+
+        self.scene.lights = [vector(1,0,0), vector(0, 1, 0), vector(0, 0, 1), \
+            vector(-1,0,0), vector(0, -1, 0), vector(0, 0, -1)]
+        self.scene.ambient = 0
+
+        self.scene.forward = (1,-1,-1)
+        self.scene.range = Network.MAX_RANGE_CM
         self.base_station = box(pos=self.reference, length=station_dims[0],
-                                width=station_dims[1], height=station_dims[2])
+                                width=station_dims[1], height=station_dims[2],
+                                color=(.1,.1,.1))
         date = datetime.datetime.now().strftime("%H-%M-%S-%m-%d-%Y")
         self.filename = Network.LOGS + "network-data-" + str(date) + ".txt"
 
@@ -292,16 +306,17 @@ class Network:
     ''' Class Methods '''
 
     @classmethod
-    def initialize(cls, spherical=False):
+    def initialize(cls, spherical=True, logging=True):
         if spherical:
-            return cls()
-        return cls(system=Mimsy.cartesian)
+            return cls(logging=logging)
+        return cls(system=Mimsy.cartesian, logging=logging)
 
     ''' Instance Methods '''
 
     def write(self, data=''):
-        with open(self.filename, 'a+') as file:
-            file.write(str(data) + '\n')
+        if self.logging:
+            with open(self.filename, 'a+') as file:
+                file.write(str(data) + '\n')
 
     def update(self, data=[], raw_pulses=[]):
         if raw_pulses:
@@ -309,7 +324,10 @@ class Network:
 
         if valid:
             self.mimsy.update(data)
-            self.vector = vector(self.mimsy.x() - self.reference[0], self.mimsy.y() - self.reference[1], self.mimsy.z() - self.reference[2])
+            self.vector = arrow(axis=(self.mimsy.x() - self.reference[0],
+                                    self.mimsy.y() - self.reference[1],
+                                    self.mimsy.z() - self.reference[2]),
+                                color=(0,0,1), shaftwidth=1)
         else:
             print('Invalid pulse timing data, aborted mimsy position update.')
 
@@ -341,7 +359,7 @@ class Network:
                 self.write(str(pulse.start) + "-Theta: " + str(degrees(theta))) # degrees
                 self.write(str(pulse.end) + "-V_SW: " + str(r_vert)) # cm
 
-        radial = 1 # (r_horiz + r_vert) / 2.0
+        radial = Network.TEST_DIST_CM # (r_horiz + r_vert) / 2.0
         return True, (radial, phi, theta)
 
     ''' Static Methods '''
