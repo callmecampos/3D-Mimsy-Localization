@@ -1,8 +1,9 @@
 from visual import *
-from math import sin, cos, tan, asin, acos, atan, sqrt, pi
+from math import sin, cos, tan, asin, acos, atan, sqrt, pi, radians
+import datetime
 
 class Pulse:
-    Nil, Sync, Horiz, Vert = -1, 0, 1, 2
+    Unclassified, Nil, Sync, Horiz, Vert = -69, -1, 0, 1, 2
 
     LOCALIZATION_PERIOD_MS = 300
     PULSE_TRACK_COUNT = 5
@@ -10,35 +11,46 @@ class Pulse:
     MIN_SYNC_PERIOD_US = 51
     MAX_SYNC_PERIOD_US = 138
 
+    SWEEP_CENTER_TIME = 8000
+
     PI = 3.14159265
     SWEEP_PERIOD_US = 16666.666667
     SWEEP_VELOCITY = pi / SWEEP_PERIOD_US
 
-    BEAM_WIDTH_MM = 1.0 # FIXME: Back-Calculate
+    SENSOR_WIDTH_MM = 1.0 # FIXME: Look at data-sheet or measure
+    SENSOR_WIDTH_CM = SENSOR_WIDTH_MM / 10.0
 
     CLOCK_SPEED_MHZ = 32.0
 
-    def __init__(self, start, end, prev_pulse=None):
+    def __init__(self, start, end, parent=None):
         self.start = start
         self.end = end
-        self.prev_pulse = prev_pulse
+        self.parent = parent
 
+        self.type = Pulse.Unclassified
         self.type = self.classify()
 
     def classify(self):
         '''
         Classifies the pulse as Nil, Sync, Horiz, or Vert.
         '''
-        if (self.prev_pulse and self.prev_pulse.isSync() and period < MIN_SYNC_PERIOD_US): # sweep pulse
-            prediction = self.prev_pulse.predictedSweep()
-            if prediction == 1 or prediction == 2:
-                return prediction
-
-        if (period >= MIN_SYNC_PERIOD_US and period < MAX_SYNC_PERIOD_US): # sync pulse
-            if (self.predictedSweep() != 0): # valid pulse (not a skip)
+        if (self.parent and self.parent.isSync()):
+            if (self.period() < Pulse.MIN_SYNC_PERIOD_US): # sweep pulse
+                prediction = self.parent.predictedSweep()
+                if prediction == Pulse.Horiz or prediction == Pulse.Vert:
+                    return prediction
+        elif (self.period() >= Pulse.MIN_SYNC_PERIOD_US and self.period() < Pulse.MAX_SYNC_PERIOD_US
+            and self.predictedSweep() != 0): # sync pulse (not skip)
                 return Pulse.Sync
 
         return Pulse.Nil
+
+    def __repr__(self):
+        if self.isSync():
+            end = ", predicted=" + str(self.predictedSweep()) + ">"
+        else:
+            end = ", hit=" + str(self.sweepHit()) + ", parent=" + self.parent.typeString() + ">"
+        return "Pulse Object:<period=" + str(self.period()) + ", type=" + self.typeString() + end
 
     ''' Universal Attributes '''
 
@@ -50,6 +62,15 @@ class Pulse:
 
     ''' Sweep Pulse Methods '''
 
+    def sweepHit(self):
+        '''
+        Returns the time in microseconds that the sweep beam
+        took to cross the photodiode.
+        '''
+        if self.isClassified() and not self.isSweep():
+            raise TypeError("Pulse must be a Sweep Pulse.")
+        return Pulse.get_period_us(self.parent.end, self.start)
+
     def getAngle(self):
         '''
         Returns the calculated angle given by the sweep pulse
@@ -57,35 +78,41 @@ class Pulse:
 
         Raises a TypeError if self is not a Sweep pulse.
         '''
-        if not self.isSweep():
+        if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
-        return Pulse.get_period_us(self.prev_pulse.end, self.start) * Pulse.SWEEP_VELOCITY
+        return self.sweepHit() * Pulse.SWEEP_VELOCITY
 
-    def getRadial_mm(self):
+    def getRadial_mm(self, phi=90):
         '''
         Returns the radial distance in millimeters as defined by the
         timing data given by the sweep pulse.
         '''
-        if not self.isSweep():
+        if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
         alpha = self.period() * Pulse.SWEEP_VELOCITY
-        return BEAM_WIDTH_MM / (2.0 * sin(alpha / 2.0))
+        return Pulse.SENSOR_WIDTH_MM * sin(radians(phi)) / float(alpha)
 
-    def getRadial(self):
+    def getRadial(self, phi=90):
         '''
         Returns the radial distance in centimeters as defined by the
         timing data given by the sweep pulse.
         '''
-        return self.getRadial_mm() * 10
+        return self.getRadial_mm(phi) / 10.0
 
-    def getBeamWidth(self, distance_cm):
+    def getEffectiveSensorWidth_mm(self, distance_mm, phi=90):
         '''
-        TEST FUNCTION. Back-calculates sweep beam width.
+        TEST FUNCTION. Back-calculates effective sensor width in millimeters.
         '''
-        if not self.isSweep():
+        if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
         alpha = self.period() * Pulse.SWEEP_VELOCITY
-        return 2.0 * distance_cm * sin(alpha / 2.0)
+        return distance_mm * alpha / sin(radians(phi))
+
+    def getEffectiveSensorWidth(self, distance_cm, phi=90):
+        '''
+        TEST FUNCTION. Back-calculates effective sensor width in centimeters.
+        '''
+        return self.getEffectiveSensorWidth_mm(distance_cm * 10.0) / 10.0
 
     ''' Sync Pulse Methods '''
 
@@ -96,14 +123,39 @@ class Pulse:
 
         Raises a TypeError if self is not a Sync pulse.
         '''
-        if not self.isSync():
+        if self.isClassified() and not self.isSync():
             raise TypeError("Pulse must be a Sync Pulse.")
-        if (self.period() & 0b100) == 1:
+        bits = self.syncBits()
+        if (bits & 0b100) == 1:
             return 0
+        return (bits & 0b001) + 1
 
-        return (self.period() & 0b001) + 1
+    def syncBits(self):
+        '''
+        Returns a number defining our 3 information bits: skip, data, axis.
+        Given by sync pulse period in microseconds (us).
+        '''
+        if self.isClassified() and not self.isSync():
+            raise TypeError("Pulse must be a Sync Pulse.")
+        return int((48*self.period() - 2501) / 500.0)
 
     ''' Type Checking '''
+
+    def typeString(self):
+        '''
+        Returns the corresponding type string for self.type.
+        '''
+        if self.isValid():
+            if self.isSync():
+                return "Sync"
+            elif self.isHoriz():
+                return "Horiz"
+            elif self.isVert():
+                return "Vert"
+            else:
+                return "Unclassified"
+        else:
+            return "Nil"
 
     def isSync(self):
         '''
@@ -134,10 +186,20 @@ class Pulse:
         '''
         return self.type != Pulse.Nil
 
+    def isClassified(self):
+        '''
+        Returns whether the pulse is unclassified.
+        '''
+        return self.type != Pulse.Unclassified
+
     ''' Static Methods '''
 
+    @staticmethod
     def get_period_us(start, end):
-        return (end - start) / Pulse.CLOCK_SPEED_MHZ
+        if end > start:
+            return (end - start) / Pulse.CLOCK_SPEED_MHZ
+        else:
+            return ((0xFFFFFFFF - start) + end) / Pulse.CLOCK_SPEED_MHZ
 
 class Mimsy:
 
@@ -215,54 +277,79 @@ class Network:
 
     TEST_DIST_CM = 100 # 1 meter default
 
+    LOGS = './logs/'
+
     def __init__(self, system=Mimsy.spherical, reference=(0, 0, 0), station_dims=(1, 1, 1)):
         # Initialize base station
         self.reference = reference
         self.base_station = box(pos=self.reference, length=station_dims[0],
                                 width=station_dims[1], height=station_dims[2])
+        date = datetime.datetime.now().strftime("%H-%M-%S-%m-%d-%Y")
+        self.filename = Network.LOGS + "network-data-" + str(date) + ".txt"
 
         self.mimsy = Mimsy(system)
 
-    def updateMimsy(self, data=[], raw_pulses=[]):
+    ''' Class Methods '''
+
+    @classmethod
+    def initialize(cls, spherical=False):
+        if spherical:
+            return cls()
+        return cls(system=Mimsy.cartesian)
+
+    ''' Instance Methods '''
+
+    def write(self, data=''):
+        with open(self.filename, 'a+') as file:
+            file.write(str(data) + '\n')
+
+    def update(self, data=[], raw_pulses=[]):
         if raw_pulses:
-            valid, data = Network.parsePulseData(raw_pulses)
+            valid, data = self.parsePulseData(raw_pulses)
 
         if valid:
             self.mimsy.update(data)
-            self.vector = vector(mimsy.x() - self.reference[0], mimsy.y() - self.reference[1], mimsy.z() - self.reference[2])
+            self.vector = vector(self.mimsy.x() - self.reference[0], self.mimsy.y() - self.reference[1], self.mimsy.z() - self.reference[2])
         else:
             print('Invalid pulse timing data, aborted mimsy position update.')
 
-    ''' Static Methods '''
-
-    @staticmethod
-    def parsePulseData(raw_pulses):
+    def parsePulseData(self, raw_pulses):
         pulses = []
         tracking = None
         for elem in raw_pulses:
-            tracking = Pulse(elem[0], elem[1], tracking)
+            tracking = Pulse(elem[0], elem[1], parent=tracking)
             pulses.append(tracking)
+            self.write(str(tracking))
+        self.write()
 
-        if not validSequence(pulses):
+        if not Network.validSequence([p.type for p in pulses]):
             return False, None
+
+        pulses = [pulse for pulse in pulses if pulse.type != Pulse.Nil]
 
         r_horiz, r_vert = 0, 0
         phi, theta = 0, 0
         for i, pulse in enumerate(pulses):
             if pulse.isHoriz():
-                r_horiz = pulse.getRadial()
+                r_horiz = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
                 phi = pulse.getAngle()
+                self.write(str(pulse.start) + "-Phi: " + str(degrees(phi))) # degrees
+                self.write(str(pulse.end) + "-H_SW: " + str(r_horiz)) # cm
             elif pulse.isVert():
-                r_vert = pulse.getRadial()
+                r_vert = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
                 theta = pulse.getAngle()
+                self.write(str(pulse.start) + "-Theta: " + str(degrees(theta))) # degrees
+                self.write(str(pulse.end) + "-V_SW: " + str(r_vert)) # cm
 
-        radial = (r_horiz + r_vert) / 2.0
+        radial = 1 # (r_horiz + r_vert) / 2.0
         return True, (radial, phi, theta)
 
+    ''' Static Methods '''
+
     @staticmethod
-    def validSequence(pulses):
-        received = [p.type for p in pulses]
-        return contains(VALID_PULSES[0], received) or contains(VALID_PULSES[1], received)
+    def validSequence(received_types):
+        return Network.contains(Network.VALID_PULSES[0], received_types) or \
+                Network.contains(Network.VALID_PULSES[1], received_types)
 
     @staticmethod
     def contains(sub, array):
@@ -270,5 +357,4 @@ class Network:
         for i in range(0, len(array)):
             if array[i:i+sub_size] == sub:
                 return True
-
         return False

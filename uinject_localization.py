@@ -236,10 +236,6 @@ class moteProbe(threading.Thread):
                                         phi = struct.unpack('<f',''.join([chr(b) for b in self.inputBuf[last_ind-8:last_ind-4]]))[0]
                                         radial = struct.unpack('<f',''.join([chr(b) for b in self.inputBuf[last_ind-12:last_int-8]]))[0]
 
-                                        if self.last_counter!=None:
-                                            if counter-self.last_counter!=1:
-                                                pass
-
                                         print 'Theta:', theta
                                         print 'Phi:', phi
                                         print 'Radial:', radial
@@ -251,7 +247,7 @@ class moteProbe(threading.Thread):
                                         formattedAddr = str('{:x}'.format(myAddr))
                                         if init_angles.get(formattedAddr) is None:
                                             init_angles[formattedAddr] = (roll, pitch)
-                                        # self.network.update(data=(roll-init_angles[formattedAddr][0], pitch-init_angles[formattedAddr][1]), addr=formattedAddr)
+                                        self.network.update(raw_pulses=pulses)
 
 
 
@@ -271,7 +267,7 @@ def main():
     print 'poipoi'
 
 if __name__=="__main__":
-    # network = Network.initialize('setup.txt')
+    network = Network.initialize()
     try:
         if args.port is None:
             proc = os.popen("ls /dev/ttyUSB*").read()
