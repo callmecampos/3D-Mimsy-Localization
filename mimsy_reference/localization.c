@@ -47,6 +47,8 @@ volatile pulse_t pulses[PULSE_TRACK_COUNT];
 volatile bool startSeen;
 volatile uint32_t start;
 
+volatile bool testRan;
+
 //=========================== prototypes ======================================
 
 void localization_timer_cb(opentimers_id_t id);
@@ -67,7 +69,7 @@ void localization_init(void) {
 
     // clear local variables
     memset(&localization_vars,0,sizeof(localization_vars_t));
-    startSeen = false;
+    startSeen = false; testRan = false;
     start = 0;
     // initialize edges array
     unsigned short int i;
@@ -350,6 +352,8 @@ void localization_task_cb(void) {
 }
 
 void localization_task_debug(void) {
+   testRan = true;
+
    float *r; float *theta; float *phi;
    pulse_t pulses_copy[PULSE_TRACK_COUNT];
 
@@ -419,7 +423,7 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
                 }
             }
         } else if (period < MAX_SYNC_PERIOD_US) { // sync pulse
-            if ((sync_pulse(period) & 0b100) == 1) { // skip pulse
+            if ((sync_pulse(period) & 0b100) >> 2 == 1) { // skip pulse
                 if (i > 0 && i < PULSE_TRACK_COUNT-1) {
                     return false;
                 }

@@ -126,7 +126,7 @@ class Pulse:
         if self.isClassified() and not self.isSync():
             raise TypeError("Pulse must be a Sync Pulse.")
         bits = self.syncBits()
-        if (bits & 0b100) == 1:
+        if (bits & 0b100) >> 2 == 1:
             return 0
         return (bits & 0b001) + 1
 
@@ -318,11 +318,16 @@ class Network:
             with open(self.filename, 'a+') as file:
                 file.write(str(data) + '\n')
 
+    def read(self):
+        if self.logging:
+            with open(self.filename, 'r') as file:
+                print(file.read())
+
     def update(self, data=[], raw_pulses=[]):
         if raw_pulses:
             valid, data = self.parsePulseData(raw_pulses)
 
-        if valid:
+        if not raw_pulses or valid:
             self.mimsy.update(data)
             self.vector = arrow(axis=(self.mimsy.x() - self.reference[0],
                                     self.mimsy.y() - self.reference[1],

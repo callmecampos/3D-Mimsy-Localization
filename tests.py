@@ -38,7 +38,11 @@ test_input = [[(0, 58), (6562, 6575), (17000, 17069), (20569, 20588), (34000, 34
 corresponding = [[Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert, Pulse.Sync]]
 test_input = [[(s*Pulse.CLOCK_SPEED_MHZ, e*Pulse.CLOCK_SPEED_MHZ) for (s, e) in pulses] for pulses in test_input]
 
-real = [(23503318, 23505383), (23770060, 23772453), (24036696, 24039416), (24303421, 24305829), (24570062, 24572133)]
+json = "start = 28209434, end = 28211509, start = 28342127, end = 28343340, start = 28476125, end = 28479205, start = 28599659, end = 28603329, start = 28605252, end = 28605834"
+parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
+
+print(real)
 test_input.append(real)
 
 print([((s -  real[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real])
@@ -57,6 +61,8 @@ network = Network.initialize(logging=args.log)
 
 for inp in test_input:
     network.update(raw_pulses=inp)
+
+network.read()
 
 print('Network Updated.')
 
@@ -92,7 +98,7 @@ def check(pulses_local, sweep_velocity = Pulse.SWEEP_VELOCITY):
                 else:
                     return False, -1, -1, -1, []
         elif (period < Pulse.MAX_SYNC_PERIOD_US): # sync pulse
-            if ((int((48*period - 2501) / 500.0) & 0b100) == 1): # skip pulse
+            if ((int((48*period - 2501) / 500.0) & 0b100) >> 2 == 1): # skip pulse
                 if (i > 0 and i < PULSE_TRACK_COUNT-1):
                     return False, -1, -1, -1, []
             elif (init_sync_index == PULSE_TRACK_COUNT):

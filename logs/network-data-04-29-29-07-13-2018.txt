@@ -1,0 +1,16 @@
+Pulse Object:<period=58.0, type=Sync, predicted=1>
+Pulse Object:<period=13.0, type=Horiz, hit=6.504, parent=Sync>
+Pulse Object:<period=69.0, type=Sync, predicted=2>
+Pulse Object:<period=19.0, type=Vert, hit=3.5, parent=Sync>
+Pulse Object:<period=55.0, type=Sync, predicted=1>
+
+209984.0-Phi: 0.140486400562
+210400.0-H_SW: 0.49008845592
+658208.0-Theta: 0.0756000003024
+658816.0-V_SW: 0.716283127884
+Pulse Object:<period=9.53125, type=Nil>
+Pulse Object:<period=9.53125, type=Nil>
+Pulse Object:<period=9.53125, type=Nil>
+Pulse Object:<period=9.53125, type=Nil>
+Pulse Object:<period=9.53125, type=Nil>
+
