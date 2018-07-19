@@ -3,12 +3,12 @@ from math import sin, cos, tan, asin, acos, atan, sqrt, pi, radians
 import datetime
 
 class Pulse:
-    Unclassified, Nil, Sync, Horiz, Vert = -69, -1, 0, 1, 2
+    Unclassified, Nil, Sync, Horiz, Vert, Sweep = -69, -1, 0, 1, 2, 3
 
     LOCALIZATION_PERIOD_MS = 300
     PULSE_TRACK_COUNT = 5
 
-    MIN_SYNC_PERIOD_US = 51
+    MIN_SYNC_PERIOD_US = 2501 / 48.0
     MAX_SYNC_PERIOD_US = 138
 
     PI = 3.14159265
@@ -26,7 +26,19 @@ class Pulse:
         self.parent = parent
 
         self.type = Pulse.Unclassified
-        self.type = self.classify()
+        self.type = self.naiveClassify()
+
+    def naiveClassify(self):
+        '''
+        Naively classifies the pulse as Sync or Sweep.
+        '''
+        if (self.period() < Pulse.MIN_SYNC_PERIOD_US):
+            if self.parent:
+                return Pulse.Sweep
+            else:
+                return Pulse.Nil
+        else:
+            return Pulse.Sync
 
     def classify(self):
         '''
@@ -59,6 +71,18 @@ class Pulse:
         Returns the period of the pulse in microseconds.
         '''
         return Pulse.get_period_us(self.start, self.end)
+
+    def getStart(self):
+        '''
+        Returns the start time of the pulse in microseconds.
+        '''
+        return self.start / Pulse.CLOCK_SPEED_MHZ
+
+    def getEnd(self):
+        '''
+        Returns the end time of the pulse in microseconds.
+        '''
+        return self.end / Pulse.CLOCK_SPEED_MHZ
 
     ''' Sweep Pulse Methods '''
 
@@ -152,6 +176,8 @@ class Pulse:
                 return "Horiz"
             elif self.isVert():
                 return "Vert"
+            elif self.isSweep():
+                return "Sweep"
             else:
                 return "Unclassified"
         else:
@@ -176,7 +202,10 @@ class Pulse:
         return self.type == Pulse.Vert
 
     def isSweep(self):
-        return self.isHoriz() or self.isVert()
+        '''
+        Returns whether the pulse is a sweep pulse.
+        '''
+        return self.type == Pulse.Sweep or self.isHoriz() or self.isVert()
 
     def isValid(self):
         '''
@@ -272,8 +301,9 @@ class Mimsy:
 
 class Network:
 
-    VALID_PULSES = [ [Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert],
-                        [Pulse.Sync, Pulse.Vert, Pulse.Sync, Pulse.Horiz] ]
+    VALID_PULSES = [ [Pulse.Sync, Pulse.Sweep, Pulse.Sync, Pulse.Sweep],
+                    [Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert],
+                    [Pulse.Sync, Pulse.Vert, Pulse.Sync, Pulse.Horiz]]
 
     MAX_RANGE_CM = 1.5 * 100
     TEST_DIST_CM = 100 # 1 meter default
@@ -317,6 +347,8 @@ class Network:
         if self.logging:
             with open(self.filename, 'a+') as file:
                 file.write(str(data) + '\n')
+        else:
+            print(data)
 
     def read(self):
         if self.logging:
@@ -353,26 +385,23 @@ class Network:
         r_horiz, r_vert = 0, 0
         phi, theta = 0, 0
         for i, pulse in enumerate(pulses):
-            if pulse.isHoriz():
-                r_horiz = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
-                phi = pulse.getAngle()
-                self.write(str(pulse.start) + "-Phi: " + str(degrees(phi))) # degrees
-                self.write(str(pulse.end) + "-H_SW: " + str(r_horiz)) # cm
-            elif pulse.isVert():
-                r_vert = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
-                theta = pulse.getAngle()
-                self.write(str(pulse.start) + "-Theta: " + str(degrees(theta))) # degrees
-                self.write(str(pulse.end) + "-V_SW: " + str(r_vert)) # cm
+            if pulse.isSweep():
+                esw = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
+                angle = pulse.getAngle()
+                self.write(str(pulse.getStart()) + "-Angle: " + str(degrees(angle))) # degrees
+                self.write(str(pulse.getEnd()) + "-ESW: " + str(esw)) # cm
+        self.write()
 
         radial = Network.TEST_DIST_CM # (r_horiz + r_vert) / 2.0
-        return True, (radial, phi, theta)
+        return False, (radial, phi, theta)
 
     ''' Static Methods '''
 
     @staticmethod
     def validSequence(received_types):
         return Network.contains(Network.VALID_PULSES[0], received_types) or \
-                Network.contains(Network.VALID_PULSES[1], received_types)
+                Network.contains(Network.VALID_PULSES[1], received_types) or \
+                Network.contains(Network.VALID_PULSES[2], received_types)
 
     @staticmethod
     def contains(sub, array):

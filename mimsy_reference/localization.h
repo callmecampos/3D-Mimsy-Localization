@@ -37,9 +37,10 @@ typedef struct {
 } localization_vars_t;
 
 typedef struct {
-   uint32_t               start;
-   uint32_t                 end;
-   int               sync_sweep; // -1 for unclassified, 0 for Sync, 1 for Horiz, 2 for Vert
+   uint32_t                time;
+   uint32_t                rise;
+   uint32_t                fall;
+   int                     type; // -1 for unclassified, 0 for Sync, 1 for Horiz, 2 for Vert
 } pulse_t;
 
 typedef enum {

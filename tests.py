@@ -38,7 +38,7 @@ test_input = [[(0, 58), (6562, 6575), (17000, 17069), (20569, 20588), (34000, 34
 corresponding = [[Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert, Pulse.Sync]]
 test_input = [[(s*Pulse.CLOCK_SPEED_MHZ, e*Pulse.CLOCK_SPEED_MHZ) for (s, e) in pulses] for pulses in test_input]
 
-json = "start = 28209434, end = 28211509, start = 28342127, end = 28343340, start = 28476125, end = 28479205, start = 28599659, end = 28603329, start = 28605252, end = 28605834"
+json = "start = 850947, end = 853006, start = 1117645, end = 1120717, start = 1384313, end = 1386377, start = 1651009, end = 1653400, start = 1917678, end = 1920417"
 parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
 
