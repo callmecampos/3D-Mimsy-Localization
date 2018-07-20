@@ -24,6 +24,7 @@
 #include "interrupt.h"
 #include "headers/hw_memmap.h"
 #include "headers/hw_gpio.h"
+#include "headers/hw_ioc.h"
 #include "ioc.h"
 
 //=========================== variables =======================================
@@ -39,6 +40,7 @@ static const uint8_t localization_dst_addr[]   = {
 static const uint32_t gptmPeriodTimerBase = GPTIMER0_BASE;
 static const uint32_t gptmEdgeTimerBase = GPTIMER3_BASE;
 static const uint32_t gptmFallingEdgeInt = INT_TIMER3B;
+static const uint32_t gptmFallingEdgeEvent = GPTIMER_CAPB_EVENT;
 
 static const uint32_t gptmTimer3AReg = 0x40033048;
 static const uint32_t gptmTimer3BReg = 0x4003304C;
@@ -51,9 +53,6 @@ static const float sweep_velocity = PI / SWEEP_PERIOD_US;
 volatile pulse_t valid_pulses[PULSE_TRACK_COUNT][PULSE_TRACK_COUNT];
 volatile pulse_t pulses[PULSE_TRACK_COUNT];
 volatile unsigned short int modular_ptr;
-
-volatile bool startSeen;
-volatile uint32_t start;
 volatile uint32_t count;
 
 volatile bool testRan;
@@ -68,8 +67,7 @@ void open_timer_init(void);
 void test_open_timer_init(void);
 void precision_timers_init(void);
 void input_edge_timers_init(void);
-void configure_pins(void);
-void openmote_GPIO_A_Handler(void);
+void mimsy_GPIO_falling_edge_handler(void);
 
 bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local);
 
@@ -79,8 +77,8 @@ void localization_init(void) {
 
     // clear local variables
     memset(&localization_vars,0,sizeof(localization_vars_t));
-    startSeen = false; testRan = false;
-    start = 0; count = 0;
+    testRan = false;
+    count = 0; modular_ptr = 0;
     // initialize edges
     unsigned short int i;
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
@@ -148,13 +146,16 @@ void precision_timers_init(void){
 }
 
 void input_edge_timers_init(void) {
-    TimerConfigure(gptmEdgeTimerBase, GPTIMER_CFG_A_CAP_TIME_UP); // configures timer3a as 16-bit timer
-    TimerConfigure(gptmEdgeTimerBase, GPTIMER_CFG_B_CAP_TIME_UP); // configures timer3b as 16-bit timer
+    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_1); // enables hw muxing of pin inputs
+    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_2); // enables hw muxing of pin inputs
+
+    TimerConfigure(gptmEdgeTimerBase, GPTIMER_CFG_SPLIT_PAIR |
+          GPTIMER_CFG_A_CAP_TIME_UP | GPTIMER_CFG_B_CAP_TIME_UP); // configures timer3a/b as 16-bit edge timers
     TimerLoadSet(gptmEdgeTimerBase,GPTIMER_A,timer_cnt_16);
     TimerLoadSet(gptmEdgeTimerBase,GPTIMER_B,timer_cnt_16);
 
     // FIXME: can we use the same gpio pin for both??
-    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_2, IOC_GPT3OCP1); // map gpio pin output to timer3a
+    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_1, IOC_GPT3OCP1); // map gpio pin output to timer3a
     IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_2, IOC_GPT3OCP2); // map gpio pin output to timer3b
 
     // NOTE: the TS3633-CM1 Prototyping Module inverts rising and falling edges when light pulses are received,
@@ -162,16 +163,18 @@ void input_edge_timers_init(void) {
     TimerControlEvent(gptmEdgeTimerBase, GPTIMER_A, GPTIMER_EVENT_NEG_EDGE); // set timer3a to capture rising edges (inverted by PCB)
     TimerControlEvent(gptmEdgeTimerBase, GPTIMER_B, GPTIMER_EVENT_POS_EDGE); // set timer3b to capture falling edges (inverted by PCB)
 
+    TimerIntDisable(gptmEdgeTimerBase, gptmFallingEdgeEvent);
+    TimerIntClear(gptmEdgeTimerBase, gptmFallingEdgeEvent);
+
     // set up interrupt for falling edge timer
     TimerIntRegister(gptmEdgeTimerBase, GPTIMER_B, mimsy_GPIO_falling_edge_handler);
-    TimerIntEnable(gptmEdgeTimerBase, GPTIMER_CAPB_EVENT);
+    TimerIntEnable(gptmEdgeTimerBase, gptmFallingEdgeEvent);
     IntEnable(gptmFallingEdgeInt);
+
+    ENABLE_INTERRUPTS();
 
     TimerEnable(gptmEdgeTimerBase,GPTIMER_A);
     TimerEnable(gptmEdgeTimerBase,GPTIMER_B);
-
-    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_1); // enables hw muxing of pin inputs
-    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_2); // enables hw muxing of pin inputs
 
     TimerSynchronize(gptmEdgeTimerBase, GPTIMER_3A_SYNC | GPTIMER_3B_SYNC);
 }
@@ -195,11 +198,11 @@ void localization_receive(OpenQueueEntry_t* pkt) {
 //=========================== private =========================================
 
 void mimsy_GPIO_falling_edge_handler(void) {
-    TimerIntClear(gptmEdgeTimerBase, GPTIMER_CAPB_EVENT);
+    TimerIntClear(gptmEdgeTimerBase, gptmFallingEdgeEvent);
 
     uint32_t time = TimerValueGet(gptmPeriodTimerBase, GPTIMER_A);
-    uint32_t rise = HWREG(gptmtimer3AReg) & 0xFFFF;
-    uint32_t fall = HWREG(gptmtimer3BReg) & 0xFFFF;
+    uint32_t rise = HWREG(gptmTimer3AReg) & 0xFFFF;
+    uint32_t fall = HWREG(gptmTimer3BReg) & 0xFFFF;
 
     // shift previous pulses and write to struct
     pulses[modular_ptr].time = time; pulses[modular_ptr].rise = rise; pulses[modular_ptr].fall = fall;
@@ -421,10 +424,10 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
     ptr = modular_ptr;
     unsigned short int i;
     for (i = ptr; i < ptr + PULSE_TRACK_COUNT; i++) {
-      pulses_local[i] = pulses[i%PULSE_TRACK_COUNT].time;
-      pulses_local[i].rise = pulses[i%PULSE_TRACK_COUNT].rise;
-      pulses_local[i].fall = pulses[i%PULSE_TRACK_COUNT].fall;
-      pulses_local[i].type = pulses[i%PULSE_TRACK_COUNT].type;
+      pulses_local[i-ptr].time = pulses[i%PULSE_TRACK_COUNT].time;
+      pulses_local[i-ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
+      pulses_local[i-ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
+      pulses_local[i-ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
     }
 
     unsigned short int init_sync_index = PULSE_TRACK_COUNT;

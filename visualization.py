@@ -11,7 +11,6 @@ class Pulse:
     MIN_SYNC_PERIOD_US = 2501 / 48.0
     MAX_SYNC_PERIOD_US = 138
 
-    PI = 3.14159265
     SWEEP_PERIOD_US = 8333.3333
     SWEEP_VELOCITY = pi / SWEEP_PERIOD_US
 
@@ -26,7 +25,7 @@ class Pulse:
         self.parent = parent
 
         self.type = Pulse.Unclassified
-        self.type = self.naiveClassify()
+        self.type = self.classify()
 
     def naiveClassify(self):
         '''
@@ -59,7 +58,7 @@ class Pulse:
         if self.isSync():
             end = ", predicted=" + str(self.predictedSweep()) + ">"
         elif self.isSweep():
-            end = ", hit=" + str(self.sweepHit()) + ", parent=" + self.parent.typeString() + ">"
+            end = ", hit=" + str(self.sweepHit_ms()) + ", parent=" + self.parent.typeString() + ">"
         else:
             end = ">"
         return "Pulse Object:<period=" + str(self.period()) + ", type=" + self.typeString() + end
@@ -88,12 +87,19 @@ class Pulse:
 
     def sweepHit(self):
         '''
-        Returns the time in milliseconds that the sweep beam
+        Returns the time in microseconds that the sweep beam
         took to hit the photodiode after the sync.
         '''
         if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
-        return Pulse.get_period_us(self.parent.end, self.start) / 1000.0
+        return Pulse.get_period_us(self.parent.end, self.start)
+
+    def sweepHit_ms(self):
+        '''
+        Returns the time in milliseconds that the sweep beam
+        took to hit the photodiode after the sync.
+        '''
+        return self.sweepHit() / 1000.0
 
     def getAngle(self):
         '''
@@ -318,18 +324,20 @@ class Network:
 
         self.scene = display(title='Network Visualization', x=0, y=0)
         self.scene.background = (0.5,0.5,0.5)
+        self.center = self.scene.center
 
         self.scene.lights = [vector(1,0,0), vector(0, 1, 0), vector(0, 0, 1), \
             vector(-1,0,0), vector(0, -1, 0), vector(0, 0, -1)]
         self.scene.ambient = 0
 
-        self.scene.forward = (1,-1,-1)
+        # self.scene.forward = (-1,-1,-1)
         self.scene.range = Network.MAX_RANGE_CM
         self.base_station = box(pos=self.reference, length=station_dims[0],
                                 width=station_dims[1], height=station_dims[2],
                                 color=(.1,.1,.1))
         date = datetime.datetime.now().strftime("%H-%M-%S-%m-%d-%Y")
         self.filename = Network.LOGS + "network-data-" + str(date) + ".txt"
+        self.vector = arrow(axis=(30,0,0), color=(0,0,1), shaftwidth=1)
 
         self.mimsy = Mimsy(system)
 
@@ -361,10 +369,92 @@ class Network:
 
         if not raw_pulses or valid:
             self.mimsy.update(data)
-            self.vector = arrow(axis=(self.mimsy.x() - self.reference[0],
+            print((self.mimsy.x() - self.reference[0],
                                     self.mimsy.y() - self.reference[1],
-                                    self.mimsy.z() - self.reference[2]),
-                                color=(0,0,1), shaftwidth=1)
+                                    self.mimsy.z() - self.reference[2]))
+            self.vector.axis = (self.mimsy.z() - self.reference[2],
+                                    self.mimsy.x() - self.reference[0],
+                                    self.mimsy.y() - self.reference[1])
+            # Turns off the default user spin and zoom and handles these functions itself.
+            # This gives more control to the program and addresses the problem that at the time of writing,
+            # Visual has a hidden user scaling variable that makes it impossible to force the camera position
+            # by setting range, if the user has already zoomed using the mouse.
+
+            self.scene.userzoom = False
+            self.scene.userspin = False
+            rangemin = 1
+            rangemax = 100
+
+            i_x = 0
+            i_y = 0
+
+            updating = False
+
+            brk = False
+            _rate = 100
+
+            while not brk:
+                rate(_rate)
+                if self.scene.kb.keys:
+                    k = self.scene.kb.getkey()
+                    _rate = 100
+
+                    change = 15
+
+                    if k == 'i':
+                        cx, cy, cz = self.center
+                        self.scene.center = (cx,cy,cz)
+                        self.scene.forward = (0,0,-1)
+                    elif k == '1':
+                        self.scene.forward = (1,0,-.25)
+                    elif k == '2':
+                        self.scene.forward = (0,1,-1)
+                    elif k == '3':
+                        self.scene.forward = (1,0,0)
+                    elif k == '4':
+                        self.scene.forward = (0,-1,0)
+                    elif k == 'shift+down' and self.scene.range.x < rangemax:
+                        self.scene.range = self.scene.range.x + .5
+                    elif k == 'shift+up' and self.scene.range.x > rangemin:
+                        self.scene.range = self.scene.range.x - .5
+                    elif k == 'up':
+                        self.scene.center = (self.scene.center.x, \
+                            self.scene.center.y + .1, self.scene.center.z)
+                    elif k == 'down':
+                        self.scene.center = (self.scene.center.x, \
+                            self.scene.center.y - .1, self.scene.center.z)
+                    elif k == 'right':
+                        self.scene.center = (self.scene.center.x + .1, \
+                             self.scene.center.y, self.scene.center.z)
+                    elif k == 'left':
+                        self.scene.center = (self.scene.center.x - .1, \
+                            self.scene.center.y, self.scene.center.z)
+                    elif k == 'shift+left':
+                        self.scene.center = (self.scene.center.x, \
+                            self.scene.center.y, self.scene.center.z + .1)
+                    elif k == 'shift+right':
+                        self.scene.center = (self.scene.center.x, \
+                            self.scene.center.y, self.scene.center.z - .1)
+                    elif k == 'w':
+                        self.scene.forward = (self.scene.forward.x, \
+                            self.scene.forward.y - .1, self.scene.forward.z)
+                    elif k == 's':
+                        self.scene.forward = (self.scene.forward.x, \
+                            self.scene.forward.y + .1, self.scene.forward.z)
+                    elif k == 'a':
+                        self.scene.forward = (self.scene.forward.x - .1, \
+                            self.scene.forward.y, self.scene.forward.z)
+                    elif k == 'd':
+                        self.scene.forward = (self.scene.forward.x + .1, \
+                            self.scene.forward.y, self.scene.forward.z)
+                    elif k == 'A':
+                        self.scene.forward = (self.scene.forward.x, \
+                            self.scene.forward.y, self.scene.forward.z - .1)
+                    elif k == 'D':
+                        self.scene.forward = (self.scene.forward.x, \
+                            self.scene.forward.y, self.scene.forward.z + .1)
+                    elif k == '.' or k == 'q':
+                        brk = True
         else:
             print('Invalid pulse timing data, aborted mimsy position update.')
 
@@ -385,15 +475,20 @@ class Network:
         r_horiz, r_vert = 0, 0
         phi, theta = 0, 0
         for i, pulse in enumerate(pulses):
-            if pulse.isSweep():
-                esw = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
-                angle = pulse.getAngle()
-                self.write(str(pulse.getStart()) + "-Angle: " + str(degrees(angle))) # degrees
-                self.write(str(pulse.getEnd()) + "-ESW: " + str(esw)) # cm
+            if pulse.isHoriz():
+                r_horiz = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
+                phi = pulse.getAngle()
+                self.write(str(pulse.start) + "-Phi: " + str(degrees(phi))) # degrees
+                self.write(str(pulse.end) + "-H_ESW: " + str(r_horiz)) # cm
+            elif pulse.isVert():
+                r_vert = pulse.getEffectiveSensorWidth(Network.TEST_DIST_CM)
+                theta = pulse.getAngle()
+                self.write(str(pulse.start) + "-Theta: " + str(degrees(theta))) # degrees
+                self.write(str(pulse.end) + "-V_ESW: " + str(r_vert)) # cm
         self.write()
 
         radial = Network.TEST_DIST_CM # (r_horiz + r_vert) / 2.0
-        return False, (radial, phi, theta)
+        return True, (radial, phi, theta)
 
     ''' Static Methods '''
 

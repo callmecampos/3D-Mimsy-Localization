@@ -38,14 +38,35 @@ test_input = [[(0, 58), (6562, 6575), (17000, 17069), (20569, 20588), (34000, 34
 corresponding = [[Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert, Pulse.Sync]]
 test_input = [[(s*Pulse.CLOCK_SPEED_MHZ, e*Pulse.CLOCK_SPEED_MHZ) for (s, e) in pulses] for pulses in test_input]
 
-json = "start = 850947, end = 853006, start = 1117645, end = 1120717, start = 1384313, end = 1386377, start = 1651009, end = 1653400, start = 1917678, end = 1920417"
+json = "{start = 18801108, end = 18803500, sync_sweep = -1}, {start = 18912971, end = 18913207, sync_sweep = -1}, {start = 19067747, end = 19070487, sync_sweep = -1}, {start = 19201546, end = 19201846, sync_sweep = -1}, {start = 19334465, end = 19337537, sync_sweep = -1}"
 parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
 
+json2 = "{start = 14198168, end = 14200568, sync_sweep = -1}, {start = 14310031, end = 14310267, sync_sweep = -1}, {start = 14464843, end = 14467584, sync_sweep = -1}, {start = 14598642, end = 14598942, sync_sweep = -1}, {start = 14731516, end = 14734591, sync_sweep = -1}"
+parsed2 =  [int(s) for s in json2.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+real2 = [(s, e) for s, e in zip(*[iter(parsed2)]*2)]
+
+json3 = "{start = 7763653, end = 7763952, sync_sweep = -1}, {start = 7896455, end = 7898864, sync_sweep = -1}, {start = 8008301, end = 8008536, sync_sweep = -1}, {start = 8163185, end = 8165261, sync_sweep = -1}, {start = 8297005, end = 8297305, sync_sweep = -1}"
+parsed3 =  [int(s) for s in json3.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+real3 = [(s, e) for s, e in zip(*[iter(parsed3)]*2)]
+
+json4 = "{start = 6151668, end = 6153743, sync_sweep = -1}, {start = 6285311, end = 6285600, sync_sweep = -1}, {start = 6418363, end = 6420769, sync_sweep = -1}, {start = 6530164, end = 6530399, sync_sweep = -1}, {start = 6685022, end = 6687096, sync_sweep = -1}"
+parsed4 =  [int(s) for s in json4.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+real4 = [(s, e) for s, e in zip(*[iter(parsed4)]*2)]
+
 print(real)
+print(real2)
+print(real3)
+print(real4)
 test_input.append(real)
+test_input.append(real2)
+test_input.append(real3)
+test_input.append(real4)
 
 print([((s -  real[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real])
+print([((s -  real2[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real2[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real2])
+print([((s -  real3[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real3[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real3])
+print([((s -  real4[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real4[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real4])
 
 '''
 for i, pulses in enumerate(test_input):
