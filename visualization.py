@@ -1,4 +1,13 @@
-from visual import *
+import sys
+in_notebook = False
+try:
+    get_ipython
+    in_notebook = True
+except:
+    if sys.version_info[0] < 3:
+        from visual import *
+    else:
+        from vpython import *
 from math import sin, cos, tan, asin, acos, atan, sqrt, pi, radians
 import datetime
 
@@ -9,7 +18,7 @@ class Pulse:
     PULSE_TRACK_COUNT = 5
 
     MIN_SYNC_PERIOD_US = 2501 / 48.0
-    MAX_SYNC_PERIOD_US = 138
+    MAX_SYNC_PERIOD_US = 6500 / 48.0
 
     SWEEP_PERIOD_US = 8333.3333
     SWEEP_VELOCITY = pi / SWEEP_PERIOD_US
@@ -156,8 +165,8 @@ class Pulse:
         if self.isClassified() and not self.isSync():
             raise TypeError("Pulse must be a Sync Pulse.")
         bits = self.syncBits()
-        if (bits & 0b100) >> 2 == 1:
-            return 0
+        #if (bits & 0b100) >> 2 == 1:
+        #    return 0
         return (bits & 0b001) + 1
 
     def syncBits(self):
@@ -235,6 +244,39 @@ class Pulse:
             return (end - start) / Pulse.CLOCK_SPEED_MHZ
         else:
             return ((0xFFFFFFFF - start) + end) / Pulse.CLOCK_SPEED_MHZ
+
+    @staticmethod
+    def parse(structs):
+        parsed = [int(s) for s in structs.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+        timings = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
+        timings_us = [((s -  timings[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - timings[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in timings]
+
+        return timings
+
+    @staticmethod
+    def getCycleData(raw_pulses):
+        pulses = []
+        tracking = None
+        for elem in raw_pulses:
+            tracking = Pulse(elem[0], elem[1], parent=tracking)
+            pulses.append(tracking)
+
+        if not Network.validSequence([p.type for p in pulses]):
+            return None, pulses
+
+        pulses = [pulse for pulse in pulses if pulse.type != Pulse.Nil]
+
+        r_horiz, r_vert = 0, 0
+        phi, theta = 0, 0
+        for pulse in pulses:
+            if pulse.isHoriz():
+                r_horiz = pulse.period()
+                phi = pulse.getAngle()
+            elif pulse.isVert():
+                r_vert = pulse.period()
+                theta = pulse.getAngle()
+
+        return ((r_horiz, r_vert), phi, theta), pulses
 
 class Mimsy:
 
@@ -345,6 +387,9 @@ class Network:
 
     @classmethod
     def initialize(cls, spherical=True, logging=True):
+        global in_notebook
+        if in_notebook:
+            return None
         if spherical:
             return cls(logging=logging)
         return cls(system=Mimsy.cartesian, logging=logging)
@@ -367,6 +412,7 @@ class Network:
         if raw_pulses:
             valid, data = self.parsePulseData(raw_pulses)
 
+        data = (data[0], 180-data[1], data[2])
         if not raw_pulses or valid:
             self.mimsy.update(data)
             print((self.mimsy.x() - self.reference[0],
@@ -375,6 +421,8 @@ class Network:
             self.vector.axis = (self.mimsy.z() - self.reference[2],
                                     self.mimsy.x() - self.reference[0],
                                     self.mimsy.y() - self.reference[1])
+
+
             # Turns off the default user spin and zoom and handles these functions itself.
             # This gives more control to the program and addresses the problem that at the time of writing,
             # Visual has a hidden user scaling variable that makes it impossible to force the camera position

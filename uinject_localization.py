@@ -245,8 +245,6 @@ class moteProbe(threading.Thread):
                                             self.outputBuf += [binascii.unhexlify(self.CMD_SEND_DATA)]
 
                                         formattedAddr = str('{:x}'.format(myAddr))
-                                        if init_angles.get(formattedAddr) is None:
-                                            init_angles[formattedAddr] = (roll, pitch)
                                         self.network.update(raw_pulses=pulses)
 
 

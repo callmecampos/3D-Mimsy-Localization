@@ -42,15 +42,15 @@ json = "{start = 18801108, end = 18803500, sync_sweep = -1}, {start = 18912971, 
 parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
 
-json2 = "{start = 14198168, end = 14200568, sync_sweep = -1}, {start = 14310031, end = 14310267, sync_sweep = -1}, {start = 14464843, end = 14467584, sync_sweep = -1}, {start = 14598642, end = 14598942, sync_sweep = -1}, {start = 14731516, end = 14734591, sync_sweep = -1}"
+json2 = "{rise = 1771694, fall = 1774426, type = -1}, {rise = 1902923, fall = 1903154, type = -1}, {rise = 2038385, fall = 2041451, type = -1}, {rise = 2166461, fall = 2166679, type = -1}, {rise = 2305046, fall = 2307118, type = -1}"
 parsed2 =  [int(s) for s in json2.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real2 = [(s, e) for s, e in zip(*[iter(parsed2)]*2)]
 
-json3 = "{start = 7763653, end = 7763952, sync_sweep = -1}, {start = 7896455, end = 7898864, sync_sweep = -1}, {start = 8008301, end = 8008536, sync_sweep = -1}, {start = 8163185, end = 8165261, sync_sweep = -1}, {start = 8297005, end = 8297305, sync_sweep = -1}"
+json3 = "{rise = 2987554, fall = 2987768, type = -1}, {rise = 3126232, fall = 3128293, type = -1}, {rise = 3257485, fall = 3257713, type = -1}, {rise = 3392880, fall = 3395286, type = -1}, {rise = 3520908, fall = 3521122, type = -1}"
 parsed3 =  [int(s) for s in json3.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real3 = [(s, e) for s, e in zip(*[iter(parsed3)]*2)]
 
-json4 = "{start = 6151668, end = 6153743, sync_sweep = -1}, {start = 6285311, end = 6285600, sync_sweep = -1}, {start = 6418363, end = 6420769, sync_sweep = -1}, {start = 6530164, end = 6530399, sync_sweep = -1}, {start = 6685022, end = 6687096, sync_sweep = -1}"
+json4 = "{rise = 25153900, fall = 25154111, type = -1}, {rise = 25292446, fall = 25295174, type = -1}, {rise = 25423812, fall = 25424040, type = -1}, {rise = 25559163, fall = 25561553, type = -1}, {rise = 25687249, fall = 25687462, type = -1}"
 parsed4 =  [int(s) for s in json4.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
 real4 = [(s, e) for s, e in zip(*[iter(parsed4)]*2)]
 
