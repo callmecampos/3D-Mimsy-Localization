@@ -26,7 +26,6 @@
 #include "headers/hw_gpio.h"
 #include "headers/hw_ioc.h"
 #include "ioc.h"
-#include "uart_mimsy.h"
 
 //=========================== variables =======================================
 
@@ -38,7 +37,6 @@ static const uint8_t localization_dst_addr[]   = {
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
 };
 
-static const uint32_t gptmPeriodTimerBase = GPTIMER0_BASE;
 static const uint32_t gptmEdgeTimerBase = GPTIMER3_BASE;
 static const uint32_t gptmFallingEdgeInt = INT_TIMER3B;
 static const uint32_t gptmFallingEdgeEvent = GPTIMER_CAPB_EVENT;
@@ -48,13 +46,16 @@ static const uint32_t gptmTimer3BReg = 0x4003304C;
 
 static const uint32_t timer_cnt_32 = 0xFFFFFFFF;
 static const uint32_t timer_cnt_16 = 0xFFFF;
+static const uint32_t timer_cnt_24 = 0xFFFFFF;
 
 static const float sweep_velocity = PI / SWEEP_PERIOD_US;
 
 volatile pulse_t valid_pulses[PULSE_TRACK_COUNT][PULSE_TRACK_COUNT];
 volatile pulse_t pulses[PULSE_TRACK_COUNT];
-volatile unsigned short int modular_ptr;
+volatile uint8_t modular_ptr;
+volatile uint32_t pulse_count;
 volatile uint32_t count;
+volatile uint32_t wsn_count;
 
 volatile bool testRan;
 
@@ -62,49 +63,32 @@ volatile bool testRan;
 
 void localization_timer_cb(opentimers_id_t id);
 void localization_task_cb(void);
-void localization_timer_debug(opentimers_id_t id);
-void localization_task_debug(void);
-void write_data_timer_cb(opentimers_id_t id);
-void write_data_task_cb(void);
 void open_timer_init(void);
-void test_open_timer_init(void);
 void precision_timers_init(void);
 void input_edge_timers_init(void);
 void mimsy_GPIO_falling_edge_handler(void);
-void quat2euler(long * quat, float * yaw, float * pitch, float * roll);
 
-bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local);
-static void printFlash(IMUDataCard * cards_stable, int page_struct_capacity);
+bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, uint8_t *ptr);
 
 //=========================== public ==========================================
 
 void localization_init(void) {
 
-    mimsyIMUInit();
-
-    mpu_set_sensors(INV_XYZ_GYRO|INV_XYZ_ACCEL); // turn on sensors
-    mpu_set_accel_fsr(16); // set fsr for accel
-    mpu_set_gyro_fsr(2000); // set fsr for gyro
-
-    mimsyDmpBegin();
-
     // clear local variables
     memset(&localization_vars,0,sizeof(localization_vars_t));
     testRan = false;
-    count = 0; modular_ptr = 0;
+    count = 0; modular_ptr = 0; pulse_count = 0; wsn_count = 0;
     // initialize edges
     unsigned short int i;
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
-        pulses[i] = (pulse_t){.time = 0, .rise = 0, .fall = 0, .type = -1};
+        pulses[i] = (pulse_t){.rise = 0, .fall = 0, .type = -1};
     }
     unsigned short int j;
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
         for (j = 0; j < PULSE_TRACK_COUNT; j++) {
-            valid_pulses[i][j].time = 0; valid_pulses[i][j].rise = 0; valid_pulses[i][j].fall = 0; valid_pulses[i][j].type = -1;
+            valid_pulses[i][j].rise = 0; valid_pulses[i][j].fall = 0; valid_pulses[i][j].type = -1;
         }
     }
-
-    mimsyPrintf("\nClock Speed: %d",SysCtrlClockGet());
 
     // register at UDP stack
     localization_vars.desc.port              = WKP_UDP_LOCALIZATION;
@@ -119,9 +103,7 @@ void localization_init(void) {
 
     // configure_pins();
     precision_timers_init();
-    // open_timer_init();
-    // test_open_timer_init();
-    write_timer_init();
+    open_timer_init();
 }
 
 void open_timer_init(void){
@@ -137,49 +119,28 @@ void open_timer_init(void){
     );
 }
 
-void write_timer_init(void){
-    localization_vars.period = LOCALIZATION_PERIOD_MS;
-    // start periodic timer
-    localization_vars.timerId = opentimers_create();
-    opentimers_scheduleIn(
-        localization_vars.timerId,
-        WRITE_PERIOD_MS,
-        TIME_MS,
-        TIMER_PERIODIC,
-        write_data_timer_cb
-    );
-}
-
-void test_open_timer_init(void){
-    localization_vars.period = LOCALIZATION_PERIOD_MS;
-    // start periodic timer
-    localization_vars.timerId = opentimers_create();
-    opentimers_scheduleIn(
-        localization_vars.timerId,
-        LOCALIZATION_PERIOD_MS,
-        TIME_MS,
-        TIMER_PERIODIC,
-        localization_timer_debug
-    );
-}
-
 void precision_timers_init(void){
-    SysCtrlPeripheralEnable(SYS_CTRL_PERIPH_GPT0); // enables timer0 module
+    // SysCtrlPeripheralEnable(SYS_CTRL_PERIPH_GPT0); // enables timer0 module
     SysCtrlPeripheralEnable(SYS_CTRL_PERIPH_GPT3); // enables timer3 module
 
     input_edge_timers_init();
 
-    TimerConfigure(gptmPeriodTimerBase, GPTIMER_CFG_PERIODIC_UP);
-    TimerLoadSet(gptmPeriodTimerBase,GPTIMER_A,timer_cnt_32);
-    TimerEnable(gptmPeriodTimerBase,GPTIMER_A);
+    // TimerConfigure(gptmPeriodTimerBase, GPTIMER_CFG_PERIODIC_UP);
+    // TimerLoadSet(gptmPeriodTimerBase,GPTIMER_A,timer_cnt_32);
+    // TimerEnable(gptmPeriodTimerBase,GPTIMER_A);
 }
 
+// NOTE: route single gpio pin to both timers and see if that still works
 void input_edge_timers_init(void) {
     GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_2); // enables hw muxing of pin inputs
     GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_5); // enables hw muxing of pin inputs
 
     TimerConfigure(gptmEdgeTimerBase, GPTIMER_CFG_SPLIT_PAIR |
           GPTIMER_CFG_A_CAP_TIME_UP | GPTIMER_CFG_B_CAP_TIME_UP); // configures timer3a/b as 16-bit edge timers
+
+    TimerPrescaleSet(gptmEdgeTimerBase,GPTIMER_A,0); // add prescaler to timer3a (24-bit)
+    TimerPrescaleSet(gptmEdgeTimerBase,GPTIMER_B,0); // add prescaler to timer3b (24-bit)
+
     TimerLoadSet(gptmEdgeTimerBase,GPTIMER_A,timer_cnt_16);
     TimerLoadSet(gptmEdgeTimerBase,GPTIMER_B,timer_cnt_16);
 
@@ -198,7 +159,7 @@ void input_edge_timers_init(void) {
     // set up interrupt for falling edge timer
     TimerIntRegister(gptmEdgeTimerBase, GPTIMER_B, mimsy_GPIO_falling_edge_handler);
     TimerIntEnable(gptmEdgeTimerBase, gptmFallingEdgeEvent);
-    IntPrioritySet(INT_TIMER3B, 7<<5);
+    // IntPrioritySet(gptmFallingEdgeInt, 7<<5);
     IntEnable(gptmFallingEdgeInt);
 
     ENABLE_INTERRUPTS();
@@ -229,60 +190,16 @@ void localization_receive(OpenQueueEntry_t* pkt) {
 void mimsy_GPIO_falling_edge_handler(void) {
     TimerIntClear(gptmEdgeTimerBase, gptmFallingEdgeEvent);
 
-    uint32_t time = TimerValueGet(gptmPeriodTimerBase, GPTIMER_A);
-    uint32_t rise = TimerValueGet(gptmEdgeTimerBase, GPTIMER_A); //HWREG(gptmTimer3AReg) & 0xFFFF;
-    uint32_t fall = TimerValueGet(gptmEdgeTimerBase, GPTIMER_B); //HWREG(gptmTimer3BReg) & 0xFFFF;
+    // uint32_t time = TimerValueGet(gptmPeriodTimerBase, GPTIMER_A);
+    // uint32_t rise = HWREG(gptmTimer3AReg) & 0xFFFF;
+    // uint32_t fall = HWREG(gptmTimer3BReg) & 0xFFFF;
 
     // shift previous pulses and write to struct
-    pulses[modular_ptr].time = time; pulses[modular_ptr].rise = rise; pulses[modular_ptr].fall = fall;
+    pulses[modular_ptr].rise = (uint32_t)(HWREG(gptmTimer3AReg)); // TimerValueGet(gptmEdgeTimerBase, GPTIMER_A);
+    pulses[modular_ptr].fall = (uint32_t)(HWREG(gptmTimer3BReg)); // TimerValueGet(gptmEdgeTimerBase, GPTIMER_B);
     modular_ptr++; if (modular_ptr == 5) modular_ptr = 0;
 
-    count += 1;
-}
-
-void write_data_timer_cb(opentimers_id_t id) {
-    scheduler_push_task(write_data_task_cb,TASKPRIO_COAP);
-}
-
-void write_data_task_cb(void) {
-    // write last 5 pulses plus dmp_read_fifo data
-    DISABLE_INTERRUPTS();
-
-    short gyro[3] = {0,0,0};
-    short accel[3] = {0,0,0};
-    long quat[4] = {0,0,0,0};
-    short sensors = INV_XYZ_GYRO | INV_WXYZ_QUAT | INV_XYZ_ACCEL;
-    short more;
-    unsigned long timestamp;
-    IMUDataCard stable_card;
-
-    while(dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more) != 0) {}
-
-    imu_store.accelX;
-    imu_store.accelY;
-    imu_store.accelZ;
-
-    imu_store.gyroX;
-    imu_store.gyroY;
-    imu_store.gyroZ;
-
-    pulse_t pulses_local[PULSE_TRACK_COUNT];
-    unsigned short int ptr;
-    ptr = modular_ptr;
-    unsigned short int i;
-    for (i = ptr; i < ptr + PULSE_TRACK_COUNT; i++) {
-      pulses_local[i-ptr].time = pulses[i%PULSE_TRACK_COUNT].time;
-      pulses_local[i-ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
-      pulses_local[i-ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
-      pulses_local[i-ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
-    }
-    imu_store.pulse_0 = pulses_local[0];
-    imu_store.pulse_1 = pulses_local[1];
-    imu_store.pulse_2 = pulses_local[2];
-    imu_store.pulse_3 = pulses_local[3];
-    imu_store.pulse_4 = pulses_local[4];
-    flashWriteIMU(IMUData data[],uint32_t size, uint32_t startPage,int wordsWritten)
-    ENABLE_INTERRUPTS();
+    pulse_count += 1;
 }
 
 /**
@@ -290,17 +207,8 @@ void write_data_task_cb(void) {
    task to scheduler with CoAP priority, and let scheduler take care of it.
 */
 void localization_timer_cb(opentimers_id_t id){
+    // count += 1;
     scheduler_push_task(localization_task_cb,TASKPRIO_COAP);
-    // SCHEDULER_WAKEUP();
-}
-
-/**
-\note timer fired, but we don't want to execute task in ISR mode instead, push
-   task to scheduler with CoAP priority, and let scheduler take care of it.
-*/
-void localization_timer_debug(opentimers_id_t id){
-    testRan = true;
-    scheduler_push_task(localization_task_debug,TASKPRIO_COAP);
     // SCHEDULER_WAKEUP();
 }
 
@@ -334,15 +242,19 @@ void localization_task_cb(void) {
 
    float *r; float *theta; float *phi;
    pulse_t pulses_copy[PULSE_TRACK_COUNT];
+   uint8_t *ptr;
+
+   wsn_count += 1;
 
    // perform localization calculations
-   if (!localize_mimsy(r, theta, phi, pulses_copy)) return;
+   if (!localize_mimsy(r, theta, phi, pulses_copy, ptr)) return;
 
    //x.flt = *r * sinf(*theta) * cosf(*phi);
    //y.flt = *r * sinf(*theta) * sinf(*phi);
    //z.flt = *r * cosf(*theta);
 
-   x.flt = *phi; y.flt = *theta; z.flt = *r;
+   // x.flt = *phi; y.flt = *theta; z.flt = *r;
+   x.flt = (float) pulse_count; y.flt = (float) wsn_count; z.flt = (float) count;
 
    // if you get here, send a packet
 
@@ -385,23 +297,10 @@ void localization_task_cb(void) {
    pkt->payload[10] = z.bytes[2];
    pkt->payload[11] = z.bytes[3];
 
-   packetfunctions_reserveHeaderSize(pkt,3*PULSE_TRACK_COUNT*sizeof(uint32_t));
+   packetfunctions_reserveHeaderSize(pkt,2*PULSE_TRACK_COUNT*sizeof(uint32_t));
    unsigned int payload_ind = 0;
    unsigned int ind;
    for (ind = 0; ind < PULSE_TRACK_COUNT; ind++) {
-       union {
-          uint32_t _int;
-          unsigned char bytes[4];
-       } t;
-
-       t._int = pulses_copy[ind].rise;
-
-       unsigned int i;
-       for (i = 0; i < 4; i++) {
-          pkt->payload[payload_ind] = t.bytes[i];
-          payload_ind++;
-       }
-
       union {
          uint32_t _int;
          unsigned char bytes[4];
@@ -409,6 +308,7 @@ void localization_task_cb(void) {
 
       start._int = pulses_copy[ind].rise;
 
+      unsigned int i;
       for (i = 0; i < 4; i++) {
          pkt->payload[payload_ind] = start.bytes[i];
          payload_ind++;
@@ -437,42 +337,15 @@ void localization_task_cb(void) {
 
    if ((openudp_send(pkt))==E_FAIL) {
       openqueue_freePacketBuffer(pkt);
-   }
-}
-
-void localization_task_debug(void) {
-   testRan = true;
-
-   float *r; float *theta; float *phi;
-   pulse_t pulses_copy[PULSE_TRACK_COUNT];
-
-   // perform localization calculations
-   if (!localize_mimsy(r, theta, phi, pulses_copy)) return;
-
-   // set valid_pulse
-   unsigned short int i;
-   unsigned short int j;
-   for (i = 0; i < PULSE_TRACK_COUNT-1; i++) {
-       for (j = 0; j < PULSE_TRACK_COUNT; j++) {
-           valid_pulses[i][j].time = valid_pulses[i+1][j].time;
-           valid_pulses[i][j].rise = valid_pulses[i+1][j].rise;
-           valid_pulses[i][j].fall = valid_pulses[i+1][j].fall;
-           valid_pulses[i][j].type = valid_pulses[i+1][j].type;
-       }
-   }
-
-   for (i = 0; i < PULSE_TRACK_COUNT; i++) {
-     valid_pulses[PULSE_TRACK_COUNT-1][i].time = pulses_copy[i].time;
-     valid_pulses[PULSE_TRACK_COUNT-1][i].rise = pulses_copy[i].rise;
-     valid_pulses[PULSE_TRACK_COUNT-1][i].fall = pulses_copy[i].fall;
-     valid_pulses[PULSE_TRACK_COUNT-1][i].type = pulses_copy[i].type;
+   } else {
+      count += 1;
    }
 }
 
 float get_period_us_32(uint32_t start, uint32_t end) {
     if (start > end) {
         // do overflow arithmetic
-        return ((float) (end + (0xFFFFFFFF - start))) / CLOCK_SPEED_MHZ;
+        return ((float) (end + (timer_cnt_32 - start))) / CLOCK_SPEED_MHZ;
     } else {
         return ((float) (end - start)) / CLOCK_SPEED_MHZ;
     }
@@ -481,7 +354,7 @@ float get_period_us_32(uint32_t start, uint32_t end) {
 float get_period_us(uint32_t start, uint32_t end) {
     if (start > end) {
         // do overflow arithmetic
-        return ((float) (end + (0xFFFF - start))) / CLOCK_SPEED_MHZ;
+        return ((float) (end + (timer_cnt_24 - start))) / CLOCK_SPEED_MHZ;
     } else {
         return ((float) (end - start)) / CLOCK_SPEED_MHZ;
     }
@@ -493,16 +366,16 @@ unsigned short int sync_bits(float duration) {
   return (unsigned short int) (48*duration - 2501) / 500;
 }
 
-bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
-    unsigned short int ptr;
-    ptr = modular_ptr;
+bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, uint8_t *ptr) {
+    *ptr = modular_ptr;
     unsigned short int i;
-    for (i = ptr; i < ptr + PULSE_TRACK_COUNT; i++) {
-      pulses_local[i-ptr].time = pulses[i%PULSE_TRACK_COUNT].time;
-      pulses_local[i-ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
-      pulses_local[i-ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
-      pulses_local[i-ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
+    for (i = *ptr; i < *ptr + PULSE_TRACK_COUNT; i++) {
+      pulses_local[i-*ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
+      pulses_local[i-*ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
+      pulses_local[i-*ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
     }
+
+    return true;
 
     unsigned short int init_sync_index = PULSE_TRACK_COUNT;
 
@@ -526,11 +399,7 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
                 }
             }
         } else if (period < MAX_SYNC_PERIOD_US) { // sync pulse
-            if ((sync_bits(period) & 0b100) >> 2 == 1) { // skip pulse
-                if (i > 0 && i < PULSE_TRACK_COUNT-1) {
-                    return false;
-                }
-            } else if (init_sync_index == PULSE_TRACK_COUNT) {
+            if (init_sync_index == PULSE_TRACK_COUNT) {
             	init_sync_index = i; // set initial valid sync pulse index
             }
             pulses_local[i].type = (int) Sync;
@@ -555,11 +424,11 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
                 r_init = true;
                 break;
             case ((int) Horiz):
-                *phi = get_period_us_32(curr_pulse.time, next_pulse.time - get_period_us(next_pulse.rise, next_pulse.fall)) * sweep_velocity;
+                *phi = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
                 phi_init = true;
                 break;
             case ((int) Vert):
-                *theta = get_period_us_32(curr_pulse.time, next_pulse.time - get_period_us(next_pulse.rise, next_pulse.fall)) * sweep_velocity;
+                *theta = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
                 theta_init = true;
                 break;
             default:
@@ -569,116 +438,4 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
     }
 
     return r_init && phi_init && theta_init;
-}
-
-/*This function writes a full 2048 KB page-worth of data to flash.
-  Parameters:
-    IMUData data[]: pointer to array of IMUData structures that are to be written to flash
-    uint32_t size: size of data[] in number of IMUData structures
-    uint32_t startPage: Flash page where data is to be written
-    IMUDataCard *card: pointer to an IMUDataCard where the function will record
-      which page the data was written to and which timestamps on the data are included
- */
-void flashWriteIMU(IMUData data[],uint32_t size, uint32_t startPage,int wordsWritten){
-  uint32_t pageStartAddr = FLASH_BASE + (startPage * PAGE_SIZE); // page base address
-  int32_t i32Res;
-
-  uint32_t structNum = size;
-
-  // mimsyPrintf("\n Flash Page Address: %x",pageStartAddr);
-  if (wordsWritten == 0){
-	  i32Res = FlashMainPageErase(pageStartAddr); // erase page so there it can be written to
-  }
-
-  // mimsyPrintf("\n Flash Erase Status: %d",i32Res);
-  for (uint32_t i = 0; i < size; i++){
-    uint32_t* wordified_data=data[i].bits; //retrieves the int32 array representation of the IMUData struct
-    // IntMasterDisable(); //disables interrupts to prevent the write operation from being messed up
-    i32Res = FlashMainPageProgram(wordified_data, pageStartAddr+i*IMU_DATA_STRUCT_SIZE+wordsWritten*4, IMU_DATA_STRUCT_SIZE); //write struct to flash
-    // IntMasterEnable();//renables interrupts
-    // mimsyPrintf("\n Flash Write Status: %d",i32Res);
-   }
-
-   // update card with location information
-   // card->page=startPage;
-   // card->startTime=data[0].fields.timestamp;
-   // card->endTime=data[size-1].fields.timestamp;
-
-}
-
-/*This function reads a page worth of IMUData from flash.
-  Parameters:
-    IMUDataCard card: The IMUDataCard that corresponds to the data that you want to read from flash
-    IMUData * dataArray: pointer that points to location of data array that you want the read operation to be written to
-    uint32_t size: size of dataArray in number of IMUData structures
-*/
-void flashReadIMU(IMUDataCard card, IMUData * dataArray,uint32_t size){
-
-  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
-
-  for(uint32_t i=0;i<size;i++){
-    for(uint32_t j=0;j<IMU_DATA_STRUCT_SIZE/4;j++){
-      IntMasterDisable();
-      dataArray[i].bits[j] = FlashGet(pageAddr+i*IMU_DATA_STRUCT_SIZE+j*4);
-      IntMasterEnable();
-    }
-  }
-
-}
-
-/*This function reads a page worth of IMUData from flash.
-  Parameters:
-    IMUDataCard card: The IMUDataCard that corresponds to the data that you want to read from flash
-    IMUData * dataArray: pointer that points to location of data array that you want the read operation to be written to
-    uint32_t size: size of dataArray in number of IMUData structures
-*/
-void flashReadIMUSection(IMUDataCard card, IMUData * dataArray,uint32_t size, int wordsRead){
-
-  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
-
-  for(uint32_t i=0;i<size;i++){
-    for(uint32_t j=0;j<IMU_DATA_STRUCT_SIZE/4;j++){
-       IntMasterDisable();
-       dataArray[i].bits[j]=FlashGet(pageAddr+i*IMU_DATA_STRUCT_SIZE+j*4+wordsRead*4);
-       IntMasterEnable();
-    }
-  }
-
-}
-
-void printFlash(IMUDataCard * cards_stable, int page_struct_capacity) {
-		 mimsyPrintf("\n data starts here:+ \n"); //+ is start condition
-		 for (int cardindex = 0; cardindex < FLASH_PAGES_TOUSE; cardindex++) {
-			 for (int words = 0; words < page_struct_capacity*IMU_DATA_STRUCT_SIZE/4*DATAPOINTS; words += IMU_DATA_STRUCT_SIZE/4*DATAPOINTS) {
-				  IMUData sendData[DATAPOINTS];
-				  flashReadIMUSection(cards_stable[cardindex], sendData, DATAPOINTS, words);
-
-				  // loop through each data point
-				  for (int dataindex=0; dataindex<DATAPOINTS; dataindex++) {
-					  // print csv data to serial
-					  // format: xl_x,xl_y,xl_z,gyrox,gyroy,gyroz,timestamp
-  					mimsyPrintf("%d,%d,%d,%d,%d,%d,%d,%x,%x,%d,%d \n",
-  								  sendData[dataindex].signedfields.accelX,
-  								  sendData[dataindex].signedfields.accelY,
-  								  sendData[dataindex].signedfields.accelZ,
-  								  sendData[dataindex].signedfields.gyroX,
-  								  sendData[dataindex].signedfields.gyroY,
-  								  sendData[dataindex].signedfields.gyroZ,
-                    //sendData[dataindex].signedfields.magX,
-  								  //sendData[dataindex].signedfields.magY,
-  								  //sendData[dataindex].signedfields.magZ,
-  								  sendData[dataindex].fields.timestamp,
-  								  sendData[dataindex].signedfields.pulse_0,
-  								  sendData[dataindex].signedfields.pulse_1,
-                    sendData[dataindex].signedfields.pulse_2,
-                    sendData[dataindex].signedfields.pulse_3,
-                    sendData[dataindex].signedfields.pulse_4,
-  								  cardindex,
-  								  dataindex+words*4/IMU_DATA_STRUCT_SIZE);
-
-
-				  }
-			 }
-		}
-		mimsyPrintf("= \n data ends here\n"); //= is end
 }
