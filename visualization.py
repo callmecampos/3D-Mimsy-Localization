@@ -1,5 +1,5 @@
 from visual import *
-from math import sin, cos, tan, asin, acos, atan, sqrt, pi, radians
+from math import sin, cos, tan, asin, acos, atan, sqrt, pi, radians, degrees
 import datetime
 
 class Pulse:
@@ -19,10 +19,13 @@ class Pulse:
 
     CLOCK_SPEED_MHZ = 32.0
 
-    def __init__(self, start, end, parent=None):
+    TIMER_32, TIMER_24, TIMER_16 = 0xFFFFFFFF, 0xFFFFFF, 0xFFFF
+
+    def __init__(self, start, end, parent=None, overflow=TIMER_24):
         self.start = start
         self.end = end
         self.parent = parent
+        self.overflow = overflow
 
         self.type = Pulse.Unclassified
         self.type = self.classify()
@@ -69,7 +72,7 @@ class Pulse:
         '''
         Returns the period of the pulse in microseconds.
         '''
-        return Pulse.get_period_us(self.start, self.end)
+        return Pulse.get_period_us(self.start, self.end, self.overflow)
 
     def getStart(self):
         '''
@@ -92,7 +95,7 @@ class Pulse:
         '''
         if self.isClassified() and not self.isSweep():
             raise TypeError("Pulse must be a Sweep Pulse.")
-        return Pulse.get_period_us(self.parent.end, self.start)
+        return Pulse.get_period_us(self.parent.end, self.start, self.overflow)
 
     def sweepHit_ms(self):
         '''
@@ -156,8 +159,6 @@ class Pulse:
         if self.isClassified() and not self.isSync():
             raise TypeError("Pulse must be a Sync Pulse.")
         bits = self.syncBits()
-        if (bits & 0b100) >> 2 == 1:
-            return 0
         return (bits & 0b001) + 1
 
     def syncBits(self):
@@ -230,11 +231,11 @@ class Pulse:
     ''' Static Methods '''
 
     @staticmethod
-    def get_period_us(start, end):
+    def get_period_us(start, end, overflow=TIMER_24):
         if end > start:
             return (end - start) / Pulse.CLOCK_SPEED_MHZ
         else:
-            return ((0xFFFFFFFF - start) + end) / Pulse.CLOCK_SPEED_MHZ
+            return ((overflow - start) + end) / Pulse.CLOCK_SPEED_MHZ
 
 class Mimsy:
 
@@ -325,6 +326,7 @@ class Network:
         self.scene = display(title='Network Visualization', x=0, y=0)
         self.scene.background = (0.5,0.5,0.5)
         self.center = self.scene.center
+        self.scene.forward = (0.414414, -0.367281, -0.832686)
 
         self.scene.lights = [vector(1,0,0), vector(0, 1, 0), vector(0, 0, 1), \
             vector(-1,0,0), vector(0, -1, 0), vector(0, 0, -1)]
@@ -363,7 +365,9 @@ class Network:
             with open(self.filename, 'r') as file:
                 print(file.read())
 
-    def update(self, data=[], raw_pulses=[]):
+    def update(self, data=[], raw_pulses=[], modular_ptr=0):
+        raw_pulses = [raw_pulses[(modular_ptr+i) % Pulse.PULSE_TRACK_COUNT] for i in range(0, Pulse.PULSE_TRACK_COUNT)]
+
         if raw_pulses:
             valid, data = self.parsePulseData(raw_pulses)
 
@@ -372,6 +376,7 @@ class Network:
             print((self.mimsy.x() - self.reference[0],
                                     self.mimsy.y() - self.reference[1],
                                     self.mimsy.z() - self.reference[2]))
+            print(degrees(self.mimsy.theta()), degrees(self.mimsy.phi()), self.mimsy.radial())
             self.vector.axis = (self.mimsy.z() - self.reference[2],
                                     self.mimsy.x() - self.reference[0],
                                     self.mimsy.y() - self.reference[1])
@@ -455,8 +460,11 @@ class Network:
                             self.scene.forward.y, self.scene.forward.z + .1)
                     elif k == '.' or k == 'q':
                         brk = True
+                    print(self.scene.forward)
         else:
             print('Invalid pulse timing data, aborted mimsy position update.')
+
+        return valid
 
     def parsePulseData(self, raw_pulses):
         pulses = []
@@ -488,7 +496,7 @@ class Network:
         self.write()
 
         radial = Network.TEST_DIST_CM # (r_horiz + r_vert) / 2.0
-        return True, (radial, phi, theta)
+        return True, (radial, pi-phi, pi-theta) # pi-theta --> correction
 
     ''' Static Methods '''
 

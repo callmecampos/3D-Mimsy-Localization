@@ -34,39 +34,67 @@ for f in sequences_fail:
 
 print('Valid Sequence Tests Passed.')
 
-test_input = [[(0, 58), (6562, 6575), (17000, 17069), (20569, 20588), (34000, 34055)]]
+_raw = [(6562, 6575), (17000, 17069), (20569, 20588), (34000, 34055), (0, 58)]
 corresponding = [[Pulse.Sync, Pulse.Horiz, Pulse.Sync, Pulse.Vert, Pulse.Sync]]
-test_input = [[(s*Pulse.CLOCK_SPEED_MHZ, e*Pulse.CLOCK_SPEED_MHZ) for (s, e) in pulses] for pulses in test_input]
+_real = [(s*Pulse.CLOCK_SPEED_MHZ, e*Pulse.CLOCK_SPEED_MHZ) for (s, e) in _raw]
 
-json = "{start = 18801108, end = 18803500, sync_sweep = -1}, {start = 18912971, end = 18913207, sync_sweep = -1}, {start = 19067747, end = 19070487, sync_sweep = -1}, {start = 19201546, end = 19201846, sync_sweep = -1}, {start = 19334465, end = 19337537, sync_sweep = -1}"
-parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
-real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
+test_input = [(_real, 4)]
 
-json2 = "{start = 14198168, end = 14200568, sync_sweep = -1}, {start = 14310031, end = 14310267, sync_sweep = -1}, {start = 14464843, end = 14467584, sync_sweep = -1}, {start = 14598642, end = 14598942, sync_sweep = -1}, {start = 14731516, end = 14734591, sync_sweep = -1}"
-parsed2 =  [int(s) for s in json2.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
-real2 = [(s, e) for s, e in zip(*[iter(parsed2)]*2)]
+def convert_to_pulses(json):
+    parsed =  [int(s) for s in json.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
+    real = [(s, e) for s, e in zip(*[iter(parsed)]*2)]
+    printable = [((s -  real[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real]
+    return real, str(printable)
 
-json3 = "{start = 7763653, end = 7763952, sync_sweep = -1}, {start = 7896455, end = 7898864, sync_sweep = -1}, {start = 8008301, end = 8008536, sync_sweep = -1}, {start = 8163185, end = 8165261, sync_sweep = -1}, {start = 8297005, end = 8297305, sync_sweep = -1}"
-parsed3 =  [int(s) for s in json3.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
-real3 = [(s, e) for s, e in zip(*[iter(parsed3)]*2)]
+jsons = []
+'''jsons.append(("{rise = 3068581, fall = 3068875, type = -1}, {rise = 3221448, fall = 3224514, type = -1}, {rise = 3331492, fall = 3331778, type = -1}, {rise = 3488094, fall = 3490834, type = -1}, {rise = 2954749, fall = 2957479, type = -1}", 4))
+jsons.append(("{rise = 787753, fall = 789825, type = -1}, {rise = 254404, fall = 256476, type = -1}, {rise = 386774, fall = 387077, type = -1}, {rise = 521092, fall = 524168, type = -1}, {rise = 681141, fall = 681470, type = -1}", 1))
+jsons.append(("{rise = 10160584, fall = 10163325, type = -1}, {rise = 10344020, fall = 10344362, type = -1}, {rise = 10427242, fall = 10430315, type = -1}, {rise = 10559854, fall = 10560346, type = -1}, {rise = 10026506, fall = 10026995, type = -1}", 4))
+jsons.append(("{rise = 12052884, fall = 12055277, type = -1}, {rise = 12157665, fall = 12158021, type = -1}, {rise = 11624314, fall = 11624673, type = -1}, {rise = 11786206, fall = 11788932, type = -1}, {rise = 11954574, fall = 11954828, type = -1}", 2))
+jsons.append(("{rise = 16383488, fall = 16383737, type = -1}, {rise = 16481595, fall = 16483998, type = -1}, {rise = 15948237, fall = 15950632, type = -1}, {rise = 16054524, fall = 16054893, type = -1}, {rise = 16214941, fall = 16217010, type = -1}", 2))
+jsons.append(("{rise = 10227231, fall = 10227605, type = -1}, {rise = 10387757, fall = 10389827, type = -1}, {rise = 9854414, fall = 9856485, type = -1}, {rise = 10022795, fall = 10023048, type = -1}, {rise = 10121091, fall = 10124158, type = -1}", 2))
+'''
+#jsons.append(("{rise = 4653401, fall = 4655794, type = -1}, {rise = 4758619, fall = 4758969, type = -1}, {rise = 4920060, fall = 4922123, type = -1}, {rise = 4386686, fall = 4388737, type = -1}, {rise = 4555723, fall = 4555972, type = -1}", 3))
+#jsons.append(("{rise = 5941165, fall = 5941426, type = -1}, {rise = 6039885, fall = 6042954, type = -1}, {rise = 6145084, fall = 6145446, type = -1}, {rise = 6306606, fall = 6309343, type = -1}, {rise = 5773253, fall = 5775323, type = -1}", 4))
+#jsons.append(("{rise = 11317363, fall = 11317617, type = -1}, {rise = 11414439, fall = 11416843, type = -1}, {rise = 11521304, fall = 11521675, type = -1}, {rise = 11521304, fall = 11521675, type = -1}, {rise = 11681124, fall = 11683180, type = -1}", 0))
+#jsons.append(("{rise = 1317213, fall = 1317468, type = -1}, {rise = 1414494, fall = 1416897, type = -1}, {rise = 1520283, fall = 1520395, type = -1}, {rise = 1521125, fall = 1521495, type = -1}, {rise = 1681148, fall = 1683882, type = -1}", 0))
+#jsons.append(("{rise = 3148219, fall = 3148260, type = -1}, {rise = 3161622, fall = 3161888, type = -1}, {rise = 3258289, fall = 3260691, type = -1}, {rise = 3363349, fall = 3363471, type = -1}, {rise = 3364136, fall = 3364500, type = -1}", 0))
+#jsons.append(("{rise = 16368729, fall = 16370800, type = -1}, {rise = 16004489, fall = 16004746, type = -1}, {rise = 16102018, fall = 16105088, type = -1}, {rise = 16207507, fall = 16207624, type = -1}, {rise = 16208347, fall = 16208716, type = -1}", 1))
 
-json4 = "{start = 6151668, end = 6153743, sync_sweep = -1}, {start = 6285311, end = 6285600, sync_sweep = -1}, {start = 6418363, end = 6420769, sync_sweep = -1}, {start = 6530164, end = 6530399, sync_sweep = -1}, {start = 6685022, end = 6687096, sync_sweep = -1}"
-parsed4 =  [int(s) for s in json4.replace(",", "").replace("{", "").replace("}", "").split() if s.isdigit()]
-real4 = [(s, e) for s, e in zip(*[iter(parsed4)]*2)]
+'''jsons.append(("{rise = 15293818, fall = 15296550, type = -1}, {rise = 15416893, fall = 15417169, type = -1}, {rise = 15560525, fall = 15563595, type = -1}, {rise = 15669227, fall = 15669527, type = -1}, {rise = 15860525, fall = 15863595, type = -1}", 0))
+jsons.append(("{rise = 7209749, fall = 7212144, type = -1}, {rise = 7316080, fall = 7316264, type = -1}, {rise = 6782719, fall = 6782904, type = -1}, {rise = 6943188, fall = 6945252, type = -1}, {rise = 7067905, fall = 7068083, type = -1}", 2))
+jsons.append(("{rise = 12276191, fall = 12278595, type = -1}, {rise = 12384626, fall = 12384926, type = -1}, {rise = 12542622, fall = 12544679, type = -1}, {rise = 12653014, fall = 12653110, type = -1}, {rise = 12665874, fall = 12666149, type = -1}", 0))
 
-print(real)
-print(real2)
-print(real3)
-print(real4)
-test_input.append(real)
-test_input.append(real2)
-test_input.append(real3)
-test_input.append(real4)
+jsons.append(("{rise = 13904793, fall = 13905101, type = -1}, {rise = 14061647, fall = 14064379, type = -1}, {rise = 14185373, fall = 14185654, type = -1}, {rise = 13652030, fall = 13652314, type = -1}, {rise = 13794997, fall = 13798062, type = -1}", 3))
+jsons.append(("{rise = 1302039, fall = 1304090, type = -1}, {rise = 1385929, fall = 1386169, type = -1}, {rise = 852574, fall = 852818, type = -1}, {rise = 1035381, fall = 1037780, type = -1}, {rise = 1145947, fall = 1146217, type = -1}", 2))
+jsons.append(("{rise = 8083553, fall = 8083848, type = -1}, {rise = 8238842, fall = 8241576, type = -1}, {rise = 8322617, fall = 8322872, type = -1}, {rise = 7789265, fall = 7789522, type = -1}, {rise = 7972167, fall = 7975230, type = -1}", 3))
+jsons.append(("{rise = 15339778, fall = 15340051, type = -1}, {rise = 15524268, fall = 15527338, type = -1}, {rise = 15634218, fall = 15634526, type = -1}, {rise = 15790983, fall = 15793717, type = -1}, {rise = 15257625, fall = 15259697, type = -1}", 4))
+'''
+#jsons.append(("{rise = 13670111, fall = 13672842, type = -1}, {rise = 13751962, fall = 13752229, type = -1}, {rise = 13936776, fall = 13939172, type = -1}, {rise = 13403429, fall = 13405829, type = -1}, {rise = 13513247, fall = 13513551, type = -1}", 3))
+#jsons.append(("{rise = 5782443, fall = 5782708, type = -1}, {rise = 5939834, fall = 5941906, type = -1}, {rise = 5406484, fall = 5408553, type = -1}, {rise = 5528056, fall = 5528335, type = -1}, {rise = 5673144, fall = 5675548, type = -1}", 2))
+#jsons.append(("{rise = 12707383, fall = 12707676, type = -1}, {rise = 12863326, fall = 12865386, type = -1}, {rise = 12985575, fall = 12985849, type = -1}, {rise = 12452221, fall = 12452491, type = -1}, {rise = 12596630, fall = 12599037, type = -1}", 3))
+jsons.append(("{rise = 11713044, fall = 11713304, type = -1}, {rise = 11857712, fall = 11860118, type = -1}, {rise = 11967728, fall = 11968002, type = -1}, {rise = 11434379, fall = 11434652, type = -1}, {rise = 11591030, fall = 11593105, type = -1}", 3))
+for json, mod in jsons:
+    real, printable = convert_to_pulses(json)
+    test_input.append((real, mod))
+    print("CONVERTED JSON: " + printable)
 
-print([((s -  real[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real])
-print([((s -  real2[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real2[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real2])
-print([((s -  real3[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real3[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real3])
-print([((s -  real4[0][0]) / Pulse.CLOCK_SPEED_MHZ, (e - real4[0][0]) / Pulse.CLOCK_SPEED_MHZ) for (s, e) in real4])
+wsn = [
+    [(10022764, 10023035), (9489407, 9489683), (9646077, 9648817), (9768132, 9768388), (9912765, 9915172)],
+    [(6562813, 6565220), (6672804, 6673073), (6829472, 6831540), (6296122, 6298862), (6418201, 6418456)],
+    [(3212861, 3215932), (3322848, 3323115), (3479534, 3481608), (2946184, 2948921), (3068265, 3068523)],
+    [(129558, 131630), (16373421, 16376153), (16495505, 16495761), (16640068, 16642473), (16750054, 16750326)],
+    [(13678907, 13679165), (13145561, 13145817), (13290137, 13292541), (13400127, 13400399), (13556831, 13559571)],
+    [(9795577, 9795831), (9939964, 9942371), (10049962, 10050228), (10206858, 10209600), (10328925, 10329182)],
+    [(6590232, 6592640), (6700234, 6700504), (6856916, 6859654), (6978977, 6979236), (6445620, 6445877)],
+    [(3350264, 3350536), (3506920, 3509659), (3628980, 3629240), (3095620, 3095880), (3240255, 3243325)],
+    [(16522877, 16523133), (16667514, 16669919), (311, 583), (156973, 159040), (279016, 279277)],
+    [(13706269, 13706529), (13850920, 13853990), (13317567, 13319973), (13427582, 13427853), (13584233, 13586308)],
+    [(10500973, 10503381), (9967618, 9970023), (10077641, 10077910), (10234300, 10237042), (10356321, 10356580)]
+    ]
+
+for w in wsn:
+    test_input.append((w, 0))
 
 '''
 for i, pulses in enumerate(test_input):
@@ -80,12 +108,17 @@ print('Pulse Type Tests Passed.')
 
 network = Network.initialize(logging=args.log)
 
+count = 0
 for inp in test_input:
-    network.update(raw_pulses=inp)
+    print(inp)
+    if network.update(raw_pulses=inp[0], modular_ptr=inp[1]):
+        count += 1
 
 network.read()
 
-print('Network Updated.')
+print
+print('DONE! Network Updated. (' + str(count) + '/' + str(len(test_input)) + ' = ' + str(100 * count / float(len(test_input))) + '% transmissions were valid.)')
+print
 
 ''' C Equivalent Testing '''
 
@@ -151,7 +184,7 @@ def check(pulses_local, sweep_velocity = Pulse.SWEEP_VELOCITY):
 
     return r_init and phi_init and theta_init, r, phi, theta, pulses_local
 
-pulses = [pulse_t(s, e) for (s, e) in test_input[0]]
+pulses = [pulse_t(s, e) for (s, e) in test_input[0][0]]
 b, r, p, t, pulses = check(pulses)
 assert b
 print(degrees(p), 70.2431999986*2)

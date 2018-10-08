@@ -26,6 +26,7 @@
 #include "headers/hw_gpio.h"
 #include "headers/hw_ioc.h"
 #include "ioc.h"
+#include "uart_mimsy.h"
 
 //=========================== variables =======================================
 
@@ -63,17 +64,29 @@ void localization_timer_cb(opentimers_id_t id);
 void localization_task_cb(void);
 void localization_timer_debug(opentimers_id_t id);
 void localization_task_debug(void);
+void write_data_timer_cb(opentimers_id_t id);
+void write_data_task_cb(void);
 void open_timer_init(void);
 void test_open_timer_init(void);
 void precision_timers_init(void);
 void input_edge_timers_init(void);
 void mimsy_GPIO_falling_edge_handler(void);
+void quat2euler(long * quat, float * yaw, float * pitch, float * roll);
 
 bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local);
+static void printFlash(IMUDataCard * cards_stable, int page_struct_capacity);
 
 //=========================== public ==========================================
 
 void localization_init(void) {
+
+    mimsyIMUInit();
+
+    mpu_set_sensors(INV_XYZ_GYRO|INV_XYZ_ACCEL); // turn on sensors
+    mpu_set_accel_fsr(16); // set fsr for accel
+    mpu_set_gyro_fsr(2000); // set fsr for gyro
+
+    mimsyDmpBegin();
 
     // clear local variables
     memset(&localization_vars,0,sizeof(localization_vars_t));
@@ -91,6 +104,8 @@ void localization_init(void) {
         }
     }
 
+    mimsyPrintf("\nClock Speed: %d",SysCtrlClockGet());
+
     // register at UDP stack
     localization_vars.desc.port              = WKP_UDP_LOCALIZATION;
     localization_vars.desc.callbackReceive   = &localization_receive;
@@ -106,6 +121,7 @@ void localization_init(void) {
     precision_timers_init();
     // open_timer_init();
     // test_open_timer_init();
+    write_timer_init();
 }
 
 void open_timer_init(void){
@@ -118,6 +134,19 @@ void open_timer_init(void){
         TIME_MS,
         TIMER_PERIODIC,
         localization_timer_cb
+    );
+}
+
+void write_timer_init(void){
+    localization_vars.period = LOCALIZATION_PERIOD_MS;
+    // start periodic timer
+    localization_vars.timerId = opentimers_create();
+    opentimers_scheduleIn(
+        localization_vars.timerId,
+        WRITE_PERIOD_MS,
+        TIME_MS,
+        TIMER_PERIODIC,
+        write_data_timer_cb
     );
 }
 
@@ -146,8 +175,8 @@ void precision_timers_init(void){
 }
 
 void input_edge_timers_init(void) {
-    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_1); // enables hw muxing of pin inputs
     GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_2); // enables hw muxing of pin inputs
+    GPIOPinTypeTimer(GPIO_A_BASE,GPIO_PIN_5); // enables hw muxing of pin inputs
 
     TimerConfigure(gptmEdgeTimerBase, GPTIMER_CFG_SPLIT_PAIR |
           GPTIMER_CFG_A_CAP_TIME_UP | GPTIMER_CFG_B_CAP_TIME_UP); // configures timer3a/b as 16-bit edge timers
@@ -155,8 +184,8 @@ void input_edge_timers_init(void) {
     TimerLoadSet(gptmEdgeTimerBase,GPTIMER_B,timer_cnt_16);
 
     // FIXME: can we use the same gpio pin for both??
-    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_1, IOC_GPT3OCP1); // map gpio pin output to timer3a
-    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_2, IOC_GPT3OCP2); // map gpio pin output to timer3b
+    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_2, IOC_GPT3OCP1); // map gpio pin output to timer3a
+    IOCPinConfigPeriphInput(GPIO_A_BASE, GPIO_PIN_5, IOC_GPT3OCP2); // map gpio pin output to timer3b
 
     // NOTE: the TS3633-CM1 Prototyping Module inverts rising and falling edges when light pulses are received,
     // so negative edges correspond to rising edges, and positive edges correspond to falling edges
@@ -169,12 +198,12 @@ void input_edge_timers_init(void) {
     // set up interrupt for falling edge timer
     TimerIntRegister(gptmEdgeTimerBase, GPTIMER_B, mimsy_GPIO_falling_edge_handler);
     TimerIntEnable(gptmEdgeTimerBase, gptmFallingEdgeEvent);
+    IntPrioritySet(INT_TIMER3B, 7<<5);
     IntEnable(gptmFallingEdgeInt);
 
     ENABLE_INTERRUPTS();
 
-    TimerEnable(gptmEdgeTimerBase,GPTIMER_A);
-    TimerEnable(gptmEdgeTimerBase,GPTIMER_B);
+    TimerEnable(gptmEdgeTimerBase,GPTIMER_BOTH);
 
     TimerSynchronize(gptmEdgeTimerBase, GPTIMER_3A_SYNC | GPTIMER_3B_SYNC);
 }
@@ -201,14 +230,59 @@ void mimsy_GPIO_falling_edge_handler(void) {
     TimerIntClear(gptmEdgeTimerBase, gptmFallingEdgeEvent);
 
     uint32_t time = TimerValueGet(gptmPeriodTimerBase, GPTIMER_A);
-    uint32_t rise = HWREG(gptmTimer3AReg) & 0xFFFF;
-    uint32_t fall = HWREG(gptmTimer3BReg) & 0xFFFF;
+    uint32_t rise = TimerValueGet(gptmEdgeTimerBase, GPTIMER_A); //HWREG(gptmTimer3AReg) & 0xFFFF;
+    uint32_t fall = TimerValueGet(gptmEdgeTimerBase, GPTIMER_B); //HWREG(gptmTimer3BReg) & 0xFFFF;
 
     // shift previous pulses and write to struct
     pulses[modular_ptr].time = time; pulses[modular_ptr].rise = rise; pulses[modular_ptr].fall = fall;
     modular_ptr++; if (modular_ptr == 5) modular_ptr = 0;
 
     count += 1;
+}
+
+void write_data_timer_cb(opentimers_id_t id) {
+    scheduler_push_task(write_data_task_cb,TASKPRIO_COAP);
+}
+
+void write_data_task_cb(void) {
+    // write last 5 pulses plus dmp_read_fifo data
+    DISABLE_INTERRUPTS();
+
+    short gyro[3] = {0,0,0};
+    short accel[3] = {0,0,0};
+    long quat[4] = {0,0,0,0};
+    short sensors = INV_XYZ_GYRO | INV_WXYZ_QUAT | INV_XYZ_ACCEL;
+    short more;
+    unsigned long timestamp;
+    IMUDataCard stable_card;
+
+    while(dmp_read_fifo(gyro, accel, quat, &timestamp, &sensors, &more) != 0) {}
+
+    imu_store.accelX;
+    imu_store.accelY;
+    imu_store.accelZ;
+
+    imu_store.gyroX;
+    imu_store.gyroY;
+    imu_store.gyroZ;
+
+    pulse_t pulses_local[PULSE_TRACK_COUNT];
+    unsigned short int ptr;
+    ptr = modular_ptr;
+    unsigned short int i;
+    for (i = ptr; i < ptr + PULSE_TRACK_COUNT; i++) {
+      pulses_local[i-ptr].time = pulses[i%PULSE_TRACK_COUNT].time;
+      pulses_local[i-ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
+      pulses_local[i-ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
+      pulses_local[i-ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
+    }
+    imu_store.pulse_0 = pulses_local[0];
+    imu_store.pulse_1 = pulses_local[1];
+    imu_store.pulse_2 = pulses_local[2];
+    imu_store.pulse_3 = pulses_local[3];
+    imu_store.pulse_4 = pulses_local[4];
+    flashWriteIMU(IMUData data[],uint32_t size, uint32_t startPage,int wordsWritten)
+    ENABLE_INTERRUPTS();
 }
 
 /**
@@ -495,4 +569,116 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local) {
     }
 
     return r_init && phi_init && theta_init;
+}
+
+/*This function writes a full 2048 KB page-worth of data to flash.
+  Parameters:
+    IMUData data[]: pointer to array of IMUData structures that are to be written to flash
+    uint32_t size: size of data[] in number of IMUData structures
+    uint32_t startPage: Flash page where data is to be written
+    IMUDataCard *card: pointer to an IMUDataCard where the function will record
+      which page the data was written to and which timestamps on the data are included
+ */
+void flashWriteIMU(IMUData data[],uint32_t size, uint32_t startPage,int wordsWritten){
+  uint32_t pageStartAddr = FLASH_BASE + (startPage * PAGE_SIZE); // page base address
+  int32_t i32Res;
+
+  uint32_t structNum = size;
+
+  // mimsyPrintf("\n Flash Page Address: %x",pageStartAddr);
+  if (wordsWritten == 0){
+	  i32Res = FlashMainPageErase(pageStartAddr); // erase page so there it can be written to
+  }
+
+  // mimsyPrintf("\n Flash Erase Status: %d",i32Res);
+  for (uint32_t i = 0; i < size; i++){
+    uint32_t* wordified_data=data[i].bits; //retrieves the int32 array representation of the IMUData struct
+    // IntMasterDisable(); //disables interrupts to prevent the write operation from being messed up
+    i32Res = FlashMainPageProgram(wordified_data, pageStartAddr+i*IMU_DATA_STRUCT_SIZE+wordsWritten*4, IMU_DATA_STRUCT_SIZE); //write struct to flash
+    // IntMasterEnable();//renables interrupts
+    // mimsyPrintf("\n Flash Write Status: %d",i32Res);
+   }
+
+   // update card with location information
+   // card->page=startPage;
+   // card->startTime=data[0].fields.timestamp;
+   // card->endTime=data[size-1].fields.timestamp;
+
+}
+
+/*This function reads a page worth of IMUData from flash.
+  Parameters:
+    IMUDataCard card: The IMUDataCard that corresponds to the data that you want to read from flash
+    IMUData * dataArray: pointer that points to location of data array that you want the read operation to be written to
+    uint32_t size: size of dataArray in number of IMUData structures
+*/
+void flashReadIMU(IMUDataCard card, IMUData * dataArray,uint32_t size){
+
+  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
+
+  for(uint32_t i=0;i<size;i++){
+    for(uint32_t j=0;j<IMU_DATA_STRUCT_SIZE/4;j++){
+      IntMasterDisable();
+      dataArray[i].bits[j] = FlashGet(pageAddr+i*IMU_DATA_STRUCT_SIZE+j*4);
+      IntMasterEnable();
+    }
+  }
+
+}
+
+/*This function reads a page worth of IMUData from flash.
+  Parameters:
+    IMUDataCard card: The IMUDataCard that corresponds to the data that you want to read from flash
+    IMUData * dataArray: pointer that points to location of data array that you want the read operation to be written to
+    uint32_t size: size of dataArray in number of IMUData structures
+*/
+void flashReadIMUSection(IMUDataCard card, IMUData * dataArray,uint32_t size, int wordsRead){
+
+  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
+
+  for(uint32_t i=0;i<size;i++){
+    for(uint32_t j=0;j<IMU_DATA_STRUCT_SIZE/4;j++){
+       IntMasterDisable();
+       dataArray[i].bits[j]=FlashGet(pageAddr+i*IMU_DATA_STRUCT_SIZE+j*4+wordsRead*4);
+       IntMasterEnable();
+    }
+  }
+
+}
+
+void printFlash(IMUDataCard * cards_stable, int page_struct_capacity) {
+		 mimsyPrintf("\n data starts here:+ \n"); //+ is start condition
+		 for (int cardindex = 0; cardindex < FLASH_PAGES_TOUSE; cardindex++) {
+			 for (int words = 0; words < page_struct_capacity*IMU_DATA_STRUCT_SIZE/4*DATAPOINTS; words += IMU_DATA_STRUCT_SIZE/4*DATAPOINTS) {
+				  IMUData sendData[DATAPOINTS];
+				  flashReadIMUSection(cards_stable[cardindex], sendData, DATAPOINTS, words);
+
+				  // loop through each data point
+				  for (int dataindex=0; dataindex<DATAPOINTS; dataindex++) {
+					  // print csv data to serial
+					  // format: xl_x,xl_y,xl_z,gyrox,gyroy,gyroz,timestamp
+  					mimsyPrintf("%d,%d,%d,%d,%d,%d,%d,%x,%x,%d,%d \n",
+  								  sendData[dataindex].signedfields.accelX,
+  								  sendData[dataindex].signedfields.accelY,
+  								  sendData[dataindex].signedfields.accelZ,
+  								  sendData[dataindex].signedfields.gyroX,
+  								  sendData[dataindex].signedfields.gyroY,
+  								  sendData[dataindex].signedfields.gyroZ,
+                    //sendData[dataindex].signedfields.magX,
+  								  //sendData[dataindex].signedfields.magY,
+  								  //sendData[dataindex].signedfields.magZ,
+  								  sendData[dataindex].fields.timestamp,
+  								  sendData[dataindex].signedfields.pulse_0,
+  								  sendData[dataindex].signedfields.pulse_1,
+                    sendData[dataindex].signedfields.pulse_2,
+                    sendData[dataindex].signedfields.pulse_3,
+                    sendData[dataindex].signedfields.pulse_4,
+  								  cardindex,
+  								  dataindex+words*4/IMU_DATA_STRUCT_SIZE);
+
+
+				  }
+			 }
+		}
+		mimsyPrintf("= \n data ends here\n"); //= is end
 }
