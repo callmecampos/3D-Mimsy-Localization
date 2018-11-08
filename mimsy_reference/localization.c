@@ -68,7 +68,7 @@ void precision_timers_init(void);
 void input_edge_timers_init(void);
 void mimsy_GPIO_falling_edge_handler(void);
 
-bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, uint8_t *ptr);
+location_t localize_mimsy(pulse_t *pulses_local);
 
 //=========================== public ==========================================
 
@@ -240,14 +240,21 @@ void localization_task_cb(void) {
       unsigned char bytes[4];
    } z;
 
-   float *r; float *theta; float *phi;
-   pulse_t pulses_copy[PULSE_TRACK_COUNT];
-   uint8_t *ptr;
+   pulse_t pulses_local[PULSE_TRACK_COUNT];
+   uint8_t ptr = modular_ptr;
 
    wsn_count += 1;
 
+   unsigned short int i;
+   for (i = ptr; i < ptr + PULSE_TRACK_COUNT; i++) {
+     pulses_local[i-ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
+     pulses_local[i-ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
+     pulses_local[i-ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
+   }
+
    // perform localization calculations
-   if (!localize_mimsy(r, theta, phi, pulses_copy, ptr)) return;
+	location_t loc = localize_mimsy(pulses_local);
+   if (!loc.valid) return;
 
    //x.flt = *r * sinf(*theta) * cosf(*phi);
    //y.flt = *r * sinf(*theta) * sinf(*phi);
@@ -297,43 +304,52 @@ void localization_task_cb(void) {
    pkt->payload[10] = z.bytes[2];
    pkt->payload[11] = z.bytes[3];
 
-   packetfunctions_reserveHeaderSize(pkt,2*PULSE_TRACK_COUNT*sizeof(uint32_t));
-   unsigned int payload_ind = 0;
-   unsigned int ind;
-   for (ind = 0; ind < PULSE_TRACK_COUNT; ind++) {
-      union {
-         uint32_t _int;
-         unsigned char bytes[4];
-      } start;
+   packetfunctions_reserveHeaderSize(pkt,4*sizeof(float));
+	union {
+		float _flt;
+		unsigned char bytes[4];
+	} phi;
 
-      start._int = pulses_copy[ind].rise;
+	union {
+		float _flt;
+		unsigned char bytes[4];
+	} theta;
 
-      unsigned int i;
-      for (i = 0; i < 4; i++) {
-         pkt->payload[payload_ind] = start.bytes[i];
-         payload_ind++;
-      }
+	union {
+		float _flt;
+		unsigned char bytes[4];
+	} r_vert;
 
-      union {
-         uint32_t _int;
-         unsigned char bytes[4];
-      } end;
+	union {
+		float _flt;
+		unsigned char bytes[4];
+	} r_horiz;
 
-      end._int = pulses_copy[ind].fall;
+	phi._flt = loc.phi; theta._flt = loc.theta; r_vert._flt = loc.r_vert; r_horiz._flt = loc.r_horiz;
 
-      for (i = 0; i < 4; i++) {
-         pkt->payload[payload_ind] = end.bytes[i];
-         payload_ind++;
-      }
-   }
+	pkt->payload[0] = phi.bytes[0];
+   pkt->payload[1] = phi.bytes[1];
+   pkt->payload[2] = phi.bytes[2];
+   pkt->payload[3] = phi.bytes[3];
+   pkt->payload[4] = theta.bytes[0];
+   pkt->payload[5] = theta.bytes[1];
+   pkt->payload[6] = theta.bytes[2];
+   pkt->payload[7] = theta.bytes[3];
+   pkt->payload[8] = r_vert.bytes[0];
+   pkt->payload[9] = r_vert.bytes[1];
+   pkt->payload[10] = r_vert.bytes[2];
+   pkt->payload[11] = r_vert.bytes[3];
+   pkt->payload[12] = r_horiz.bytes[0];
+   pkt->payload[13] = r_horiz.bytes[1];
+   pkt->payload[14] = r_horiz.bytes[2];
+   pkt->payload[15] = r_horiz.bytes[3];
 
-   /* packetfunctions_reserveHeaderSize(pkt,sizeof(asn_t));
-   ieee154e_getAsn(asnArray);
-   pkt->payload[0] = asnArray[0];
-   pkt->payload[1] = asnArray[1];
-   pkt->payload[2] = asnArray[2];
-   pkt->payload[3] = asnArray[3];
-   pkt->payload[4] = asnArray[4]; */
+   packetfunctions_reserveHeaderSize(pkt,sizeof(asn_t));
+   pkt->payload[0] = loc.asn[0];
+   pkt->payload[1] = loc.asn[1];
+   pkt->payload[2] = loc.asn[2];
+   pkt->payload[3] = loc.asn[3];
+   pkt->payload[4] = loc.asn[4];
 
    if ((openudp_send(pkt))==E_FAIL) {
       openqueue_freePacketBuffer(pkt);
@@ -366,23 +382,28 @@ unsigned short int sync_bits(float duration) {
   return (unsigned short int) (48*duration - 2501) / 500;
 }
 
-bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, uint8_t *ptr) {
-    *ptr = modular_ptr;
-    unsigned short int i;
-    for (i = *ptr; i < *ptr + PULSE_TRACK_COUNT; i++) {
-      pulses_local[i-*ptr].rise = pulses[i%PULSE_TRACK_COUNT].rise;
-      pulses_local[i-*ptr].fall = pulses[i%PULSE_TRACK_COUNT].fall;
-      pulses_local[i-*ptr].type = pulses[i%PULSE_TRACK_COUNT].type;
-    }
+float distance_fit_horiz(float time_us) {
+  float E = 0.2218; float c0 = -0.3024; float c1 = 18.2991;
+  return E + c1 / (time_us - c0 * sweep_velocity);
+}
 
-    return true;
+float distance_fit_vert(float time_us) {
+  float E = 0.3074; float c0 = 0.9001; float c1 = 16.1908;
+  return E + c1 / (time_us - c0 * sweep_velocity);
+}
 
-    unsigned short int init_sync_index = PULSE_TRACK_COUNT;
+location_t localize_mimsy(pulse_t *pulses_local) {
+    location_t loc = (location_t){.phi = 0, .theta = 0,
+											.r_vert = 0, .r_horiz = 0,
+											.asn =  {0, 0, 0, 0, 0}, .valid = 0};
+    ieee154e_getAsn(loc.asn);
+
+    uint8_t init_sync_index = PULSE_TRACK_COUNT;
 
     // loop through and classify our pulses
     Pulses valid_seq_a[4] = { Sync, Horiz, Sync, Vert };
     Pulses valid_seq_b[4] = { Sync, Vert, Sync, Horiz };
-    unsigned short int sweep_axes_check = 0;
+    uint8_t sweep_axes_check = 0; uint8_t i;
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
         float period = get_period_us(pulses_local[i].rise, pulses_local[i].fall);
         if (period < MIN_SYNC_PERIOD_US) { // sweep pulse
@@ -393,9 +414,9 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, u
 
                 int ind = i - init_sync_index;
                 if (axis == ((int) valid_seq_a[ind]) || axis == ((int) valid_seq_b[ind])) {
-                    sweep_axes_check += axis;
+                    sweep_axes_check += axis; // check for 1 horizontal, 1 vertical sweep
                 } else {
-                    return false;
+                    return loc;
                 }
             }
         } else if (period < MAX_SYNC_PERIOD_US) { // sync pulse
@@ -405,13 +426,11 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, u
             pulses_local[i].type = (int) Sync;
         } else { // neither
             pulses_local[i].type = -1;
-            return false;
+            return loc;
         }
     }
 
-    if (init_sync_index == PULSE_TRACK_COUNT || sweep_axes_check != 3) return false;
-
-    bool r_init = false; bool phi_init = false; bool theta_init = false;
+    if (init_sync_index == PULSE_TRACK_COUNT || sweep_axes_check != 3) return loc;
 
     for (i = init_sync_index; i < PULSE_TRACK_COUNT-1; i++) {
         pulse_t curr_pulse = pulses_local[i];
@@ -419,23 +438,21 @@ bool localize_mimsy(float *r, float *theta, float *phi, pulse_t *pulses_local, u
 
         switch(next_pulse.type) {
             case ((int) Sync):
-                // *r = DIODE_WIDTH_CM / (get_period_us(next_pulse.rise, next_pulse.fall) * sweep_velocity);
-                *r = get_period_us(next_pulse.rise, next_pulse.fall);
-                r_init = true;
                 break;
             case ((int) Horiz):
-                *phi = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
-                phi_init = true;
+                loc.phi = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
+                loc.r_horiz = distance_fit_horiz(get_period_us(next_pulse.rise, next_pulse.fall));
                 break;
             case ((int) Vert):
-                *theta = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
-                theta_init = true;
+                loc.theta = get_period_us(curr_pulse.fall, next_pulse.rise) * sweep_velocity;
+                loc.r_vert = distance_fit_vert(get_period_us(next_pulse.rise, next_pulse.fall));
                 break;
             default:
-                return false;
+                return loc;
                 break;
         }
     }
 
-    return r_init && phi_init && theta_init;
+    loc.valid = true;
+    return loc;
 }

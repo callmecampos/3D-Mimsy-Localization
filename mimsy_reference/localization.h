@@ -42,6 +42,15 @@ typedef struct {
    int                     type; // -1 for unclassified, 0 for Sync, 1 for Horiz, 2 for Vert
 } pulse_t;
 
+typedef struct {
+	float                    phi;
+	float                  theta;
+	float                 r_vert;
+	float				      r_horiz;
+	uint8_t               asn[5];
+	int						  valid;
+} location_t;
+
 typedef enum {
    Sync, Horiz, Vert,
 } Pulses;
