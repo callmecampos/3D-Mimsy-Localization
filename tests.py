@@ -73,13 +73,15 @@ jsons.append(("{rise = 15339778, fall = 15340051, type = -1}, {rise = 15524268, 
 #jsons.append(("{rise = 13670111, fall = 13672842, type = -1}, {rise = 13751962, fall = 13752229, type = -1}, {rise = 13936776, fall = 13939172, type = -1}, {rise = 13403429, fall = 13405829, type = -1}, {rise = 13513247, fall = 13513551, type = -1}", 3))
 #jsons.append(("{rise = 5782443, fall = 5782708, type = -1}, {rise = 5939834, fall = 5941906, type = -1}, {rise = 5406484, fall = 5408553, type = -1}, {rise = 5528056, fall = 5528335, type = -1}, {rise = 5673144, fall = 5675548, type = -1}", 2))
 #jsons.append(("{rise = 12707383, fall = 12707676, type = -1}, {rise = 12863326, fall = 12865386, type = -1}, {rise = 12985575, fall = 12985849, type = -1}, {rise = 12452221, fall = 12452491, type = -1}, {rise = 12596630, fall = 12599037, type = -1}", 3))
-jsons.append(("{rise = 11713044, fall = 11713304, type = -1}, {rise = 11857712, fall = 11860118, type = -1}, {rise = 11967728, fall = 11968002, type = -1}, {rise = 11434379, fall = 11434652, type = -1}, {rise = 11591030, fall = 11593105, type = -1}", 3))
+# jsons.append(("{rise = 11713044, fall = 11713304, type = -1}, {rise = 11857712, fall = 11860118, type = -1}, {rise = 11967728, fall = 11968002, type = -1}, {rise = 11434379, fall = 11434652, type = -1}, {rise = 11591030, fall = 11593105, type = -1}", 3))
+jsons.append(("{rise = 9157178, fall = 9157792, type = -1}, {rise = 9301024, fall = 9303438, type = -1}, {rise = 9420372, fall = 9421047, type = -1}, {rise = 9567712, fall = 9569788, type = -1}, {rise = 9690531, fall = 9691147, type = -1}", 0))
+jsons.append(("{rise = 9834391, fall = 9836804, type = -1}, {rise = 9953715, fall = 9954389, type = -1}, {rise = 10101081, fall = 10103160, type = -1}, {rise = 10223882, fall = 10224497, type = -1}, {rise = 10367759, fall = 10370838, type = -1}", 0))
 for json, mod in jsons:
     real, printable = convert_to_pulses(json)
     test_input.append((real, mod))
     print("CONVERTED JSON: " + printable)
 
-wsn = [
+'''wsn = [
     [(10022764, 10023035), (9489407, 9489683), (9646077, 9648817), (9768132, 9768388), (9912765, 9915172)],
     [(6562813, 6565220), (6672804, 6673073), (6829472, 6831540), (6296122, 6298862), (6418201, 6418456)],
     [(3212861, 3215932), (3322848, 3323115), (3479534, 3481608), (2946184, 2948921), (3068265, 3068523)],
@@ -94,7 +96,7 @@ wsn = [
     ]
 
 for w in wsn:
-    test_input.append((w, 0))
+    test_input.append((w, 0))'''
 
 '''
 for i, pulses in enumerate(test_input):

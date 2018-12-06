@@ -26,6 +26,15 @@
 #include "headers/hw_gpio.h"
 #include "headers/hw_ioc.h"
 #include "ioc.h"
+#include "flash.h"
+#include "uart_mimsy.h"
+
+#define PAGE_SIZE                2048
+#define PAGE_TO_ERASE            14
+#define PAGE_TO_ERASE_START_ADDR (FLASH_BASE + (PAGE_TO_ERASE * PAGE_SIZE))
+#define DATAPOINTS			100
+#define FLASH_PAGES_TOUSE	50
+#define FLASH_PAGE_STORAGE_START 100 //first flash page to start at. TODO: make sure this doesn't overlap
 
 //=========================== variables =======================================
 
@@ -50,7 +59,6 @@ static const uint32_t timer_cnt_24 = 0xFFFFFF;
 
 static const float sweep_velocity = PI / SWEEP_PERIOD_US;
 
-volatile pulse_t valid_pulses[PULSE_TRACK_COUNT][PULSE_TRACK_COUNT];
 volatile pulse_t pulses[PULSE_TRACK_COUNT];
 volatile uint8_t modular_ptr;
 volatile uint32_t pulse_count;
@@ -63,12 +71,17 @@ volatile bool testRan;
 
 void localization_timer_cb(opentimers_id_t id);
 void localization_task_cb(void);
+
+void uart_timer_cb(opentimers_id_t id);
+
 void open_timer_init(void);
+void uart_timer_init(void);
 void precision_timers_init(void);
 void input_edge_timers_init(void);
 void mimsy_GPIO_falling_edge_handler(void);
 
 location_t localize_mimsy(pulse_t *pulses_local);
+static void printFlash(PulseDataCard * cards_stable, int page_struct_capacity);
 
 //=========================== public ==========================================
 
@@ -83,12 +96,8 @@ void localization_init(void) {
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
         pulses[i] = (pulse_t){.rise = 0, .fall = 0, .type = -1};
     }
-    unsigned short int j;
-    for (i = 0; i < PULSE_TRACK_COUNT; i++) {
-        for (j = 0; j < PULSE_TRACK_COUNT; j++) {
-            valid_pulses[i][j].rise = 0; valid_pulses[i][j].fall = 0; valid_pulses[i][j].type = -1;
-        }
-    }
+
+    bool uart = true; // if false, use radio
 
     // register at UDP stack
     localization_vars.desc.port              = WKP_UDP_LOCALIZATION;
@@ -101,9 +110,15 @@ void localization_init(void) {
     //Delay to avoid pin floating problems
     for (_i = 0xFFFF; _i != 0; _i--);
 
+    uartMimsyInit();
+
     // configure_pins();
     precision_timers_init();
-    open_timer_init();
+    if (uart) {
+		 uart_timer_init();
+    } else {
+       open_timer_init();
+    }
 }
 
 void open_timer_init(void){
@@ -116,6 +131,19 @@ void open_timer_init(void){
         TIME_MS,
         TIMER_PERIODIC,
         localization_timer_cb
+    );
+}
+
+void uart_timer_init(void){
+    localization_vars.period = LOCALIZATION_PERIOD_MS;
+    // start periodic timer
+    localization_vars.timerId = opentimers_create();
+    opentimers_scheduleIn(
+        localization_vars.timerId,
+        LOCALIZATION_PERIOD_MS,
+        TIME_MS,
+        TIMER_PERIODIC,
+        uart_timer_cb
     );
 }
 
@@ -197,9 +225,36 @@ void mimsy_GPIO_falling_edge_handler(void) {
     // shift previous pulses and write to struct
     pulses[modular_ptr].rise = (uint32_t)(HWREG(gptmTimer3AReg)); // TimerValueGet(gptmEdgeTimerBase, GPTIMER_A);
     pulses[modular_ptr].fall = (uint32_t)(HWREG(gptmTimer3BReg)); // TimerValueGet(gptmEdgeTimerBase, GPTIMER_B);
-    modular_ptr++; if (modular_ptr == 5) modular_ptr = 0;
+    modular_ptr++; if (modular_ptr == PULSE_TRACK_COUNT) modular_ptr = 0;
 
     pulse_count += 1;
+}
+
+void uart_timer_cb(opentimers_id_t id){
+    DISABLE_INTERRUPTS();
+    mimsyPrintf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d \n",
+				pulses[(modular_ptr+0)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+0)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+1)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+1)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+2)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+2)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+3)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+3)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+4)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+4)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+5)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+5)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+6)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+6)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+7)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+7)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+8)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+8)%PULSE_TRACK_COUNT].fall,
+				pulses[(modular_ptr+9)%PULSE_TRACK_COUNT].rise,
+				pulses[(modular_ptr+9)%PULSE_TRACK_COUNT].fall
+	);
+	ENABLE_INTERRUPTS();
 }
 
 /**
@@ -212,7 +267,7 @@ void localization_timer_cb(opentimers_id_t id){
     // SCHEDULER_WAKEUP();
 }
 
-void localization_task_cb(void) {
+void localization_task_cb(void) { // only runs with radio-enabled
    OpenQueueEntry_t*    pkt;
    // uint8_t              asnArray[5];
 
@@ -401,8 +456,8 @@ location_t localize_mimsy(pulse_t *pulses_local) {
     uint8_t init_sync_index = PULSE_TRACK_COUNT;
 
     // loop through and classify our pulses
-    Pulses valid_seq_a[4] = { Sync, Horiz, Sync, Vert };
-    Pulses valid_seq_b[4] = { Sync, Vert, Sync, Horiz };
+    Pulses valid_seq_a[4] = { Sync, Horiz, Sync, Vert }; // 8-10 pulses?
+    Pulses valid_seq_b[4] = { Sync, Vert, Sync, Horiz }; // 8-10 pulses? get pattern
     uint8_t sweep_axes_check = 0; uint8_t i;
     for (i = 0; i < PULSE_TRACK_COUNT; i++) {
         float period = get_period_us(pulses_local[i].rise, pulses_local[i].fall);
@@ -455,4 +510,123 @@ location_t localize_mimsy(pulse_t *pulses_local) {
 
     loc.valid = true;
     return loc;
+}
+
+// UART
+
+/*This function writes a full 2048 KB page-worth of data to flash.
+  Parameters:
+    PulseData data[]: pointer to array of PulseData structures that are to be written to flash
+    uint32_t size: size of data[] in number of PulseData structures
+    uint32_t startPage: Flash page where data is to be written
+    PulseDataCard *card: pointer to an PulseDataCard where the function will record
+      which page the data was written to and which timestamps on the data are included
+ */
+void flashWritePulse(PulseData data[],uint32_t size, uint32_t startPage,int wordsWritten){
+  uint32_t pageStartAddr = FLASH_BASE + (startPage * PAGE_SIZE); // page base address
+  int32_t i32Res;
+
+  uint32_t structNum = size;
+
+  // mimsyPrintf("\n Flash Page Address: %x",pageStartAddr);
+  if (wordsWritten == 0){
+	  i32Res = FlashMainPageErase(pageStartAddr); // erase page so there it can be written to
+  }
+
+  // mimsyPrintf("\n Flash Erase Status: %d",i32Res);
+  for (uint32_t i = 0; i < size; i++){
+    uint32_t* wordified_data=data[i].bits; //retrieves the int32 array representation of the PulseData struct
+    IntMasterDisable(); //disables interrupts to prevent the write operation from being messed up
+    i32Res = FlashMainPageProgram(wordified_data, pageStartAddr+i*PULSE_DATA_STRUCT_SIZE+wordsWritten*4, PULSE_DATA_STRUCT_SIZE); //write struct to flash
+    IntMasterEnable();//renables interrupts
+    // mimsyPrintf("\n Flash Write Status: %d",i32Res);
+   }
+
+   // update card with location information
+   // card->page=startPage;
+   // card->startTime=data[0].fields.timestamp;
+   // card->endTime=data[size-1].fields.timestamp;
+
+}
+
+/*This function reads a page worth of PulseData from flash.
+  Parameters:
+    PulseDataCard card: The PulseDataCard that corresponds to the data that you want to read from flash
+    PulseData * dataArray: pointer that points to location of data array that you want the read operation to be written to
+    uint32_t size: size of dataArray in number of PulseData structures
+*/
+void flashReadPulse(PulseDataCard card, PulseData * dataArray, uint32_t size){
+
+  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
+
+  for(uint32_t i=0;i<size;i++){
+    for(uint32_t j=0;j<PULSE_DATA_STRUCT_SIZE/4;j++){
+      IntMasterDisable();
+      dataArray[i].bits[j] = FlashGet(pageAddr+i*PULSE_DATA_STRUCT_SIZE+j*4);
+      IntMasterEnable();
+    }
+  }
+
+}
+
+/*This function reads a page worth of PulseData from flash.
+  Parameters:
+    PulseDataCard card: The PulseDataCard that corresponds to the data that you want to read from flash
+    PulseData * dataArray: pointer that points to location of data array that you want the read operation to be written to
+    uint32_t size: size of dataArray in number of PulseData structures
+*/
+void flashReadPulseSection(PulseDataCard card, PulseData * dataArray, uint32_t size, int wordsRead){
+
+  uint32_t pageAddr=FLASH_BASE+card.page*PAGE_SIZE;
+
+  for(uint32_t i=0;i<size;i++){
+    for(uint32_t j=0;j<PULSE_DATA_STRUCT_SIZE/4;j++){
+       IntMasterDisable();
+       dataArray[i].bits[j]=FlashGet(pageAddr+i*PULSE_DATA_STRUCT_SIZE+j*4+wordsRead*4);
+       IntMasterEnable();
+    }
+  }
+
+}
+
+// one caveat with flash is that if the flash write is interrupted, everything fails
+// may need to make this highest priority interrupt
+void printFlash(PulseDataCard * cards_stable, int page_struct_capacity) {
+	mimsyPrintf("\n data starts here:+ \n"); //+ is start condition
+	for (int cardindex = 0; cardindex < FLASH_PAGES_TOUSE; cardindex++) {
+		for (int words = 0; words < page_struct_capacity*PULSE_DATA_STRUCT_SIZE/4*DATAPOINTS; words += 				PULSE_DATA_STRUCT_SIZE/4*DATAPOINTS) {
+			PulseData sendData[DATAPOINTS];
+			flashReadPulseSection(cards_stable[cardindex], sendData, DATAPOINTS, words);
+
+			// loop through each data point
+			for (int dataindex=0; dataindex<DATAPOINTS; dataindex++) {
+				// print csv data to serial
+				// format: xl_x,xl_y,xl_z,gyrox,gyroy,gyroz,timestamp
+				mimsyPrintf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d \n",
+				sendData[dataindex].fields.pulse_0s,
+				sendData[dataindex].fields.pulse_0e,
+				sendData[dataindex].fields.pulse_1s,
+				sendData[dataindex].fields.pulse_1e,
+				sendData[dataindex].fields.pulse_2s,
+				sendData[dataindex].fields.pulse_2e,
+				sendData[dataindex].fields.pulse_3s,
+				sendData[dataindex].fields.pulse_3e,
+				sendData[dataindex].fields.pulse_4s,
+				sendData[dataindex].fields.pulse_4e,
+				sendData[dataindex].fields.pulse_5s,
+				sendData[dataindex].fields.pulse_5e,
+				sendData[dataindex].fields.pulse_6s,
+				sendData[dataindex].fields.pulse_6e,
+				sendData[dataindex].fields.pulse_7s,
+				sendData[dataindex].fields.pulse_7e,
+				sendData[dataindex].fields.pulse_8s,
+				sendData[dataindex].fields.pulse_8e,
+				sendData[dataindex].fields.pulse_9s,
+				sendData[dataindex].fields.pulse_9e,
+				cardindex,
+				dataindex+words*4/PULSE_DATA_STRUCT_SIZE);
+			}
+		}
+	}
+	mimsyPrintf("= \n data ends here\n"); //= is end
 }
